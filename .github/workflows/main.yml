@@ -1,23 +1,22 @@
-name: Hello GitHub Actions
+name: Deploy to AWS Lambda
 
 on:
   push:
-    branches: [ "main" ] # main 브랜치에 푸시될 때 실행
+    branches: [ "main" ]
 
 jobs:
-  test-job:
-    runs-on: ubuntu-latest # 리눅스 환경에서 실행
+  deploy:
+    runs-on: ubuntu-latest
     steps:
       - name: 코드 가져오기
-        uses: actions/checkout@v4 # 깃허브에 있는 우리 코드를 가상 컴퓨터로 복사
+        uses: actions/checkout@v4
 
-      - name: 인사하기
-        run: echo "자동화 배포를 시작합니다!"
-
-      - name: 파이썬 설치
-        uses: actions/setup-python@v5
+      - name: AWS 자격 증명 설정
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          python-version: '3.12'
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2 # 서울 리전
 
-      - name: 버전 확인
-        run: python --version
+      - name: 연결 확인 테스트
+        run: aws sts get-caller-identity # "나 누구로 접속했니?"라고 물어보는 명령
