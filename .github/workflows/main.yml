@@ -11,12 +11,34 @@ jobs:
       - name: 코드 가져오기
         uses: actions/checkout@v4
 
+      - name: 파이썬 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # 본인의 파이썬 버전에 맞춰 수정
+
+      - name: 라이브러리 설치
+        run: |
+          # 라이브러리를 'package' 폴더에 따로 설치합니다.
+          pip install --target ./package -r requirements.txt
+
+      - name: 패키징 (Zip 생성)
+        run: |
+          cd package
+          zip -r ../deployment_package.zip .
+          cd ..
+          # 메인 코드 파일들을 압축 파일에 추가합니다.
+          zip -g deployment_package.zip app.py 
+          # (다른 파일이 더 있다면 여기에 추가: zip -g deployment_package.zip utils.py 등)
+
       - name: AWS 자격 증명 설정
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-northeast-2 # 서울 리전
+          aws-region: ap-northeast-2
 
-      - name: 연결 확인 테스트
-        run: aws sts get-caller-identity # "나 누구로 접속했니?"라고 물어보는 명령
+      - name: 람다 배포 실행
+        run: |
+          aws lambda update-function-code \
+            --function-name Gongtion-Lambda \
+            --zip-file fileb://deployment_package.zip
