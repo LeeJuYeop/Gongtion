@@ -5,7 +5,7 @@
 *test.py
 
 # 클로드코드 작업기록용 텍스트 파일 제외
-*.txt
+*notes.txt
 
 # env파일 제외
 .env
