@@ -1,0 +1,23 @@
+name: Hello GitHub Actions
+
+on:
+  push:
+    branches: [ "main" ] # main 브랜치에 푸시될 때 실행
+
+jobs:
+  test-job:
+    runs-on: ubuntu-latest # 리눅스 환경에서 실행
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v4 # 깃허브에 있는 우리 코드를 가상 컴퓨터로 복사
+
+      - name: 인사하기
+        run: echo "자동화 배포를 시작합니다!"
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 버전 확인
+        run: python --version
