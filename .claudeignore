@@ -1,0 +1,14 @@
+# .claudeignore
+
+# 테스트파일 제외
+localtest.py
+*test.py
+
+# 클로드코드 작업기록용 텍스트 파일 제외
+*notes.txt
+
+# env파일 제외
+.env
+
+# .git 제외
+.git/
