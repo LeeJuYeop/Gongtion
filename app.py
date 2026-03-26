@@ -207,8 +207,6 @@ def handle_message_changed(body):
 def ack_message(ack):
     ack()
 
-aaaaa
-
 def process_message(message, say):
     text = message.get('text', '')
     urls = URL_PATTERN.findall(text)
