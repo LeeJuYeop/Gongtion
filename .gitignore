@@ -9,3 +9,6 @@
 
 # env파일 제외
 .env
+
+# .claude 제외
+.claude
