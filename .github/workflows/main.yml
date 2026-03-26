@@ -14,7 +14,7 @@ jobs:
       - name: 파이썬 설정
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12' # 본인의 파이썬 버전에 맞춰 수정
+          python-version: '3.14' # 본인의 파이썬 버전에 맞춰 수정
 
       - name: 라이브러리 설치
         run: |
