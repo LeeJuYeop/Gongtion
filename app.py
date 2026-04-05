@@ -166,59 +166,18 @@ def markdown_to_notion_blocks(markdown: str) -> list:
     return blocks
 
 
-def sanitize_properties(properties: dict) -> dict:
-    """Notion API 전달 전 속성값을 정제한다.
-    - null date 제거
-    - select 필드: null·빈 값 제거, 쉼표를 공백으로 대체
-    - multi_select 필드: 빈 항목 제거, 쉼표 포함 시 개별 항목으로 분리
-    """
-    # 마감기한이 null이면 제거 (Notion API는 null date를 허용하지 않음)
+def create_notion_page(gemini_result: dict) -> dict:
+    """Gemini 결과를 Notion 데이터베이스에 페이지로 저장한다. 생성된 페이지 정보를 반환한다."""
+    properties = gemini_result["properties"]
+
+    # 마감기한이 null이면 해당 속성 자체를 제외 (Notion API는 null date를 허용하지 않음)
     if properties.get("마감기한", {}).get("date") is None:
         properties.pop("마감기한", None)
 
-    # select 필드 정제 (직무 포함)
-    for key in ("직무", "경력", "채용유형", "지역"):
-        prop = properties.get(key)
-        if prop is None:
-            continue
-        select_obj = prop.get("select")
-        if not select_obj or not isinstance(select_obj, dict):
+    # select 값이 빈 문자열이면 해당 속성 제외
+    for key in ("경력", "채용유형", "지역"):
+        if properties.get(key, {}).get("select", {}).get("name") == "":
             properties.pop(key, None)
-            continue
-        name = (select_obj.get("name") or "").strip()
-        if not name:
-            properties.pop(key, None)
-        elif "," in name:
-            log.warning('[sanitize] select 필드 "%s" 쉼표 제거: %s', key, name)
-            properties[key] = {"select": {"name": name.replace(",", " ")}}
-
-    # multi_select 필드 정제 (기술스택)
-    for key in ("기술스택",):
-        prop = properties.get(key)
-        if prop is None:
-            continue
-        items = prop.get("multi_select") or []
-        clean_items = []
-        for item in items:
-            name = (item.get("name") or "").strip()
-            if not name:
-                continue
-            if "," in name:
-                log.warning('[sanitize] multi_select 필드 "%s" 쉼표 분리: %s', key, name)
-                for part in name.split(","):
-                    part = part.strip()
-                    if part:
-                        clean_items.append({"name": part})
-            else:
-                clean_items.append({"name": name})
-        properties[key] = {"multi_select": clean_items}
-
-    return properties
-
-
-def create_notion_page(gemini_result: dict) -> dict:
-    """Gemini 결과를 Notion 데이터베이스에 페이지로 저장한다. 생성된 페이지 정보를 반환한다."""
-    properties = sanitize_properties(gemini_result["properties"])
 
     payload = {
         "parent": {"database_id": os.environ.get("NOTION_DATABASE_ID")},
