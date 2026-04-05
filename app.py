@@ -240,6 +240,16 @@ def create_notion_page(gemini_result: dict) -> dict:
     return response.json()
 
 
+def process_url(url: str) -> dict:
+    """URL을 받아 Jina → Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다."""
+    log.info('===== 파이프라인 시작: %s =====', url)
+    content = fetch_with_jina(url)
+    result = summarize_job_posting(content, url)
+    page = create_notion_page(result)
+    log.info('===== 파이프라인 완료 =====')
+    return page
+
+
 @app.event({"type": "message", "subtype": "message_changed"})
 def handle_message_changed(body):
     pass  # URL 미리보기 생성 등으로 발생하는 이벤트 — 무시
@@ -258,7 +268,6 @@ def process_message(message, say):
     extracted_url = urls[0].strip('<>')
     thread_ts = message.get('ts')
 
-    log.info('===== 새 요청 시작 =====')
     step = 'Jina'
     try:
         content = fetch_with_jina(extracted_url)
@@ -268,7 +277,6 @@ def process_message(message, say):
         page = create_notion_page(result)
         notion_url = page.get('url', '')
         say(text=f'✅ Notion 페이지가 생성되었습니다! {notion_url}', thread_ts=thread_ts)
-        log.info('===== 요청 완료 =====')
     except requests.exceptions.Timeout:
         log.error('[%s] 요청 시간 초과', step)
         say(text=f'⚠️ 요청 처리에 실패했습니다. (사유: {step} 요청 시간 초과)', thread_ts=thread_ts)
@@ -320,5 +328,16 @@ def lambda_handler(event, context):
                  headers.get("X-Slack-Retry-Num") or headers.get("x-slack-retry-num"))
         return {"statusCode": 200, "body": ""}
 
-    # 4. 인증이 아닌 일반 이벤트는 Slack Bolt 핸들러로 전달
+    # 4. 크롤러 Lambda에서 직접 URL을 전달한 경우
+    if event.get("source") == "crawler":
+        url = event.get("url", "")
+        if url:
+            try:
+                process_url(url)
+            except Exception as e:
+                log.error('크롤러 URL 처리 실패 (%s): %s', url, e)
+                return {"statusCode": 500, "body": str(e)}
+        return {"statusCode": 200, "body": ""}
+
+    # 5. 인증이 아닌 일반 이벤트는 Slack Bolt 핸들러로 전달
     return slack_handler.handle(event, context)
