@@ -3,6 +3,10 @@ name: Deploy to AWS Lambda
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'app.py'
+      - 'pipeline.py'
+      - 'requirements.txt'
 
 jobs:
   deploy:
@@ -27,7 +31,7 @@ jobs:
           zip -r ../deployment_package.zip .
           cd ..
           # 메인 코드 파일들을 압축 파일에 추가합니다.
-          zip -g deployment_package.zip app.py 
+          zip -g deployment_package.zip app.py pipeline.py
           # (다른 파일이 더 있다면 여기에 추가: zip -g deployment_package.zip utils.py 등)
 
       - name: AWS 자격 증명 설정

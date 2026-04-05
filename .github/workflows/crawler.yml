@@ -1,0 +1,28 @@
+name: Auto Job Crawler
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # 4시간마다 실행 (UTC 기준 0, 4, 8, 12, 16, 20시)
+  workflow_dispatch:          # GitHub Actions 탭에서 수동 실행 가능 (테스트용)
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 라이브러리 설치
+        run: pip install -r requirements.txt beautifulsoup4
+
+      - name: 크롤러 실행
+        run: python crawler.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
