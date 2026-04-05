@@ -104,17 +104,30 @@ def fetch_saramin_urls(keywords: list[str]) -> set[str]:
 def fetch_wanted_urls(keywords: list[str]) -> set[str]:
     """원티드 비공식 검색 API에서 채용공고 URL을 수집한다.
 
-    NOTE: 원티드 API 응답 구조가 변경될 경우 data 키 경로를 수정할 것.
-    공식 OpenAPI(openapi.wanted.jobs) 사용 시 WANTED_API_KEY 환경변수를 추가하고
-    Authorization 헤더를 포함해야 한다.
+    NOTE: 원티드 API가 422를 반환하면 로그의 'Response body' 줄을 확인해
+    실제 validation 오류 메시지를 파악할 것.
+    지속 실패 시 공식 OpenAPI(openapi.wanted.jobs) 전환을 고려:
+    WANTED_API_KEY 환경변수를 추가하고 Authorization 헤더를 포함해야 한다.
     """
     urls: set[str] = set()
     for kw in keywords:
         try:
             resp = requests.get(
                 "https://www.wanted.co.kr/api/v4/jobs",
-                params={"job_sort": "job.latest_order", "limit": 20, "offset": 0, "query": kw},
-                headers={**BROWSER_HEADERS, "Referer": "https://www.wanted.co.kr/"},
+                params={
+                    "job_sort": "job.latest_order",
+                    "limit": 20,
+                    "offset": 0,
+                    "query": kw,
+                    "country": "kr",
+                    "years": -1,
+                    "locations": "all",
+                },
+                headers={
+                    **BROWSER_HEADERS,
+                    "Referer": "https://www.wanted.co.kr/",
+                    "Accept": "application/json, text/plain, */*",
+                },
                 timeout=15,
             )
             resp.raise_for_status()
@@ -124,6 +137,9 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
                 if job_id:
                     urls.add(f"https://www.wanted.co.kr/wd/{job_id}")
             log.info("[원티드] '%s' → %d건", kw, len(urls))
+        except requests.exceptions.HTTPError as e:
+            body = e.response.text[:300] if e.response is not None else ""
+            log.warning("[원티드] '%s' 수집 실패: %s | Response body: %s", kw, e, body)
         except Exception as e:
             log.warning("[원티드] '%s' 수집 실패: %s", kw, e)
         time.sleep(1)
