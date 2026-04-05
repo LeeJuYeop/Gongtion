@@ -89,12 +89,13 @@ def fetch_saramin_urls(keywords: list[str]) -> set[str]:
             resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
+            before = len(urls)
             for a in soup.select(".item_recruit a.str_tit"):
                 href = a.get("href", "")
                 if href and "rec_idx" in href:
                     full = "https://www.saramin.co.kr" + href if href.startswith("/") else href
                     urls.add(full)
-            log.info("[사람인] '%s' → %d건", kw, len(urls))
+            log.info("[사람인] '%s' → %d건", kw, len(urls) - before)
         except Exception as e:
             log.warning("[사람인] '%s' 수집 실패: %s", kw, e)
         time.sleep(1)
@@ -132,11 +133,12 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
             )
             resp.raise_for_status()
             data = resp.json()
+            before = len(urls)
             for job in data.get("data", []):
                 job_id = job.get("id")
                 if job_id:
                     urls.add(f"https://www.wanted.co.kr/wd/{job_id}")
-            log.info("[원티드] '%s' → %d건", kw, len(urls))
+            log.info("[원티드] '%s' → %d건", kw, len(urls) - before)
         except requests.exceptions.HTTPError as e:
             body = e.response.text[:300] if e.response is not None else ""
             log.warning("[원티드] '%s' 수집 실패: %s | Response body: %s", kw, e, body)
@@ -163,12 +165,13 @@ def fetch_jobkorea_urls(keywords: list[str]) -> set[str]:
             resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
+            before = len(urls)
             for a in soup.select(".list-post .information-title a"):
                 href = a.get("href", "")
                 if href:
                     full = "https://www.jobkorea.co.kr" + href if href.startswith("/") else href
                     urls.add(full)
-            log.info("[잡코리아] '%s' → %d건", kw, len(urls))
+            log.info("[잡코리아] '%s' → %d건", kw, len(urls) - before)
         except Exception as e:
             log.warning("[잡코리아] '%s' 수집 실패: %s", kw, e)
         time.sleep(1)
@@ -188,12 +191,13 @@ def fetch_zighang_urls(keywords: list[str]) -> set[str]:
             resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
+            before = len(urls)
             for a in soup.select("a[href*='/jobs/']"):
                 href = a.get("href", "")
                 if href and href != "/jobs/":
                     full = "https://zighang.com" + href if href.startswith("/") else href
                     urls.add(full)
-            log.info("[직행] '%s' → %d건", kw, len(urls))
+            log.info("[직행] '%s' → %d건", kw, len(urls) - before)
         except Exception as e:
             log.warning("[직행] '%s' 수집 실패: %s", kw, e)
         time.sleep(1)
@@ -212,6 +216,9 @@ def collect_all_urls(keywords: list[str]) -> set[str]:
     return all_urls
 
 
+MAX_NEW_PER_RUN = 15  # 런당 최대 신규 처리 건수 (Gemini API 사용량 제한)
+
+
 def main():
     keywords = load_keywords()
     log.info("=== 크롤러 시작 | 키워드: %s ===", keywords)
@@ -223,9 +230,13 @@ def main():
     fail_count = 0
 
     for url in all_urls:
+        if new_count >= MAX_NEW_PER_RUN:
+            log.info("런당 최대 처리 건수(%d) 도달 — 나머지는 다음 실행에서 처리됨", MAX_NEW_PER_RUN)
+            break
+
         try:
             if is_duplicate(url):
-                log.info("중복 — 건너뜀: %s", url)
+                log.debug("중복 — 건너뜀: %s", url)
                 continue
         except Exception as e:
             log.warning("중복 확인 실패 (%s): %s — 처리 진행", url, e)
