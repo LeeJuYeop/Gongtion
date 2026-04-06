@@ -2,7 +2,7 @@ name: Auto Job Crawler
 
 on:
   schedule:
-    - cron: '0 */4 * * *'   # 4시간마다 실행 (UTC 기준 0, 4, 8, 12, 16, 20시)
+    - cron: '0 0,9 * * *'   # 하루 2회 실행 (KST 기준 오전 9시, 오후 6시)
   workflow_dispatch:          # GitHub Actions 탭에서 수동 실행 가능 (테스트용)
 
 jobs:
