@@ -220,12 +220,31 @@ def fetch_zighang_urls(keywords: list[str]) -> set[str]:
 # ── 메인 오케스트레이션 ────────────────────────────────────────────────────────
 
 def collect_all_urls(keywords: list[str]) -> set[str]:
-    """모든 사이트에서 URL을 수집해 하나의 집합으로 반환한다. 개별 사이트 실패는 무시한다."""
+    """모든 사이트에서 URL을 수집해 하나의 집합으로 반환한다. 개별 사이트 실패는 무시한다.
+
+    CRAWL_MODE 환경변수로 수집 대상을 제한할 수 있다.
+      morning  → 원티드 + 직행
+      evening  → 사람인 + 잡코리아
+      (미설정) → 전체
+    """
+    mode = os.environ.get("CRAWL_MODE", "").lower()
     all_urls: set[str] = set()
-    all_urls.update(fetch_saramin_urls(keywords))
-    all_urls.update(fetch_wanted_urls(keywords))
-    all_urls.update(fetch_jobkorea_urls(keywords))
-    all_urls.update(fetch_zighang_urls(keywords))
+
+    if mode == "morning":
+        log.info("[모드] 오전 — 원티드 + 직행")
+        all_urls.update(fetch_wanted_urls(keywords))
+        all_urls.update(fetch_zighang_urls(keywords))
+    elif mode == "evening":
+        log.info("[모드] 오후 — 사람인 + 잡코리아")
+        all_urls.update(fetch_saramin_urls(keywords))
+        all_urls.update(fetch_jobkorea_urls(keywords))
+    else:
+        log.info("[모드] 전체 — 모든 사이트")
+        all_urls.update(fetch_saramin_urls(keywords))
+        all_urls.update(fetch_wanted_urls(keywords))
+        all_urls.update(fetch_jobkorea_urls(keywords))
+        all_urls.update(fetch_zighang_urls(keywords))
+
     return all_urls
 
 
