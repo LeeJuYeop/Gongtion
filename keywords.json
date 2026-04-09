@@ -1,3 +1,11 @@
 {
-  "keywords": ["클라우드", "DevOps", "백엔드", "인프라", "SRE"]
+  "keywords": ["클라우드", "DevOps", "백엔드", "인프라", "SRE"],
+  "zighang": {
+    "depthTwos": ["서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어"],
+    "regions": [],
+    "employeeTypes": [],
+    "careerMin": null,
+    "careerMax": null,
+    "educations": []
+  }
 }

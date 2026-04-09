@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import time
+import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 import requests
@@ -42,10 +43,10 @@ BROWSER_HEADERS = {
 
 # ── 설정 로드 ──────────────────────────────────────────────────────────────────
 
-def load_keywords() -> list[str]:
-    """keywords.json 에서 필터링 키워드 목록을 읽는다."""
+def load_config() -> dict:
+    """keywords.json 전체를 읽어 반환한다."""
     with open("keywords.json", encoding="utf-8") as f:
-        return json.load(f)["keywords"]
+        return json.load(f)
 
 
 # ── Notion 중복 확인 ───────────────────────────────────────────────────────────
@@ -191,35 +192,61 @@ def fetch_jobkorea_urls(keywords: list[str]) -> set[str]:
     return urls
 
 
-def fetch_zighang_urls(keywords: list[str]) -> set[str]:
-    """직행(zighang.com) 검색결과 HTML에서 채용공고 URL을 수집한다.
+def fetch_zighang_urls(cfg: dict) -> set[str]:
+    """직행(zighang.com) 공개 API로 채용공고 URL을 수집한다.
 
-    NOTE: 직행은 공식 RSS/API가 없어 HTML 스크래핑에 의존한다.
-    사이트 구조 변경 시 a[href*='/recruitment/'] 셀렉터를 수정해야 한다.
+    API: https://api.zighang.com/api/recruitments/v3
+    지원 필터: depthTwos(직무), regions(지역), employeeTypes(채용유형),
+              careerMin/careerMax(경력), educations(학력)
+    NOTE: deadlineType 파라미터는 API에서 지원되지 않는다.
+    keywords.json 의 "zighang" 섹션으로 필터를 제어한다.
     """
     urls: set[str] = set()
-    for kw in keywords:
-        try:
-            search_url = f"https://zighang.com/recruitment?q={quote(kw)}"
-            resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-            before = len(urls)
-            for a in soup.select("a[href*='/recruitment/']"):
-                href = a.get("href", "")
-                if href and href != "/recruitment/":
-                    full = "https://zighang.com" + href if href.startswith("/") else href
-                    urls.add(full)
-            log.info("[직행] '%s' → %d건", kw, len(urls) - before)
-        except Exception as e:
-            log.warning("[직행] '%s' 수집 실패: %s", kw, e)
-        time.sleep(1)
+
+    params: list[tuple] = [
+        ("page", 0),
+        ("size", 50),
+        ("sortCondition", "ZIGHANG_SCORE"),
+        ("orderCondition", "DESC"),
+    ]
+
+    for key in ("depthTwos", "regions", "employeeTypes", "educations"):
+        for val in cfg.get(key, []):
+            params.append((key, val))
+
+    career_min = cfg.get("careerMin")
+    career_max = cfg.get("careerMax")
+    if career_min is not None:
+        params.append(("careerMin", career_min))
+    if career_max is not None:
+        params.append(("careerMax", career_max))
+
+    try:
+        resp = requests.get(
+            "https://api.zighang.com/api/recruitments/v3",
+            params=params,
+            headers=BROWSER_HEADERS,
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+        root = ET.fromstring(resp.text)
+        # 각 공고의 직접 자식 <id>만 추출 (company 하위 <id>는 제외)
+        for item in root.findall("./data/content/content"):
+            id_el = item.find("id")
+            if id_el is not None and id_el.text:
+                urls.add(f"https://zighang.com/recruitment/{id_el.text}")
+
+        log.info("[직행] API 수집 → %d건", len(urls))
+    except Exception as e:
+        log.warning("[직행] API 수집 실패: %s", e)
+
     return urls
 
 
 # ── 메인 오케스트레이션 ────────────────────────────────────────────────────────
 
-def collect_all_urls(keywords: list[str]) -> set[str]:
+def collect_all_urls(keywords: list[str], zighang_cfg: dict) -> set[str]:
     """모든 사이트에서 URL을 수집해 하나의 집합으로 반환한다. 개별 사이트 실패는 무시한다.
 
     CRAWL_MODE 환경변수로 수집 대상을 제한할 수 있다.
@@ -233,7 +260,7 @@ def collect_all_urls(keywords: list[str]) -> set[str]:
     if mode == "morning":
         log.info("[모드] 오전 — 원티드 + 직행")
         all_urls.update(fetch_wanted_urls(keywords))
-        all_urls.update(fetch_zighang_urls(keywords))
+        all_urls.update(fetch_zighang_urls(zighang_cfg))
     elif mode == "evening":
         log.info("[모드] 오후 — 사람인 + 잡코리아")
         all_urls.update(fetch_saramin_urls(keywords))
@@ -243,7 +270,7 @@ def collect_all_urls(keywords: list[str]) -> set[str]:
         all_urls.update(fetch_saramin_urls(keywords))
         all_urls.update(fetch_wanted_urls(keywords))
         all_urls.update(fetch_jobkorea_urls(keywords))
-        all_urls.update(fetch_zighang_urls(keywords))
+        all_urls.update(fetch_zighang_urls(zighang_cfg))
 
     return all_urls
 
@@ -252,10 +279,12 @@ MAX_NEW_PER_RUN = 15  # 런당 최대 신규 처리 건수 (Gemini API 사용량
 
 
 def main():
-    keywords = load_keywords()
+    config = load_config()
+    keywords = config["keywords"]
+    zighang_cfg = config.get("zighang", {})
     log.info("=== 크롤러 시작 | 키워드: %s ===", keywords)
 
-    all_urls = collect_all_urls(keywords)
+    all_urls = collect_all_urls(keywords, zighang_cfg)
     log.info("총 %d개 URL 수집 완료. 중복 확인 중...", len(all_urls))
 
     new_count = 0
