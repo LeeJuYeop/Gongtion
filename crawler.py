@@ -73,28 +73,41 @@ def is_duplicate(url: str) -> bool:
 # ── 사이트별 URL 수집 ──────────────────────────────────────────────────────────
 
 def fetch_saramin_urls(keywords: list[str]) -> set[str]:
-    """사람인 검색결과 HTML에서 채용공고 URL을 수집한다.
+    """사람인 Open API(oapi.saramin.co.kr)에서 채용공고 URL을 수집한다.
 
-    NOTE: 사람인은 동적 렌더링을 일부 사용하므로, 셀렉터가 동작하지 않으면
-    saramin.co.kr의 실제 HTML 구조를 확인해 .item_recruit 셀렉터를 수정할 것.
+    NOTE: 사람인 메인 사이트가 완전 JS 렌더링으로 전환되어 requests+BeautifulSoup으로는
+    공고 목록을 가져올 수 없다. 공식 Open API를 사용한다.
+    API 키는 https://oapi.saramin.co.kr 에서 무료 발급 가능하다.
+    GitHub Actions Secret에 SARAMIN_API_KEY를 추가해야 한다.
     """
+    api_key = os.environ.get("SARAMIN_API_KEY")
+    if not api_key:
+        log.warning("[사람인] SARAMIN_API_KEY 환경변수가 없어 수집을 건너뜁니다.")
+        return set()
+
     urls: set[str] = set()
     for kw in keywords:
         try:
-            search_url = (
-                "https://www.saramin.co.kr/zf_user/search"
-                f"?search_area=main&search_done=y&search_optional_item=n"
-                f"&keywd={quote(kw)}&recruitPage=1&recruitSort=relation&recruitPageCount=40"
+            resp = requests.get(
+                "https://oapi.saramin.co.kr/job-search",
+                params={
+                    "access-key": api_key,
+                    "keywords": kw,
+                    "count": 40,
+                    "start": 1,
+                    "_type": "json",
+                    "sort": "pd",
+                },
+                headers=BROWSER_HEADERS,
+                timeout=15,
             )
-            resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
             resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+            data = resp.json()
             before = len(urls)
-            for a in soup.select(".item_recruit a.str_tit"):
-                href = a.get("href", "")
-                if href and "rec_idx" in href:
-                    full = "https://www.saramin.co.kr" + href if href.startswith("/") else href
-                    urls.add(full)
+            for job in data.get("jobs", {}).get("job", []):
+                job_url = job.get("url")
+                if job_url:
+                    urls.add(job_url)
             log.info("[사람인] '%s' → %d건", kw, len(urls) - before)
         except Exception as e:
             log.warning("[사람인] '%s' 수집 실패: %s", kw, e)
