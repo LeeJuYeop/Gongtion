@@ -195,19 +195,19 @@ def fetch_zighang_urls(keywords: list[str]) -> set[str]:
     """직행(zighang.com) 검색결과 HTML에서 채용공고 URL을 수집한다.
 
     NOTE: 직행은 공식 RSS/API가 없어 HTML 스크래핑에 의존한다.
-    사이트 구조 변경 시 a[href*='/jobs/'] 셀렉터를 수정해야 한다.
+    사이트 구조 변경 시 a[href*='/recruitment/'] 셀렉터를 수정해야 한다.
     """
     urls: set[str] = set()
     for kw in keywords:
         try:
-            search_url = f"https://zighang.com/jobs?q={quote(kw)}"
+            search_url = f"https://zighang.com/recruitment?q={quote(kw)}"
             resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
             before = len(urls)
-            for a in soup.select("a[href*='/jobs/']"):
+            for a in soup.select("a[href*='/recruitment/']"):
                 href = a.get("href", "")
-                if href and href != "/jobs/":
+                if href and href != "/recruitment/":
                     full = "https://zighang.com" + href if href.startswith("/") else href
                     urls.add(full)
             log.info("[직행] '%s' → %d건", kw, len(urls) - before)
