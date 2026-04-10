@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import time
 import requests
 from urllib.parse import urlparse, parse_qs
 from google import genai
@@ -97,13 +98,25 @@ def summarize_job_posting(text: str, url: str) -> dict:
 """
 
     log.info('[2/3] Gemini API 호출 중...')
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-        ),
-    )
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            break
+        except Exception as e:
+            is_transient = any(k in str(e) for k in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"))
+            if is_transient and attempt < max_retries - 1:
+                wait = 10 * (2 ** attempt)  # 10s → 20s → 40s
+                log.warning('[2/3] Gemini 일시적 오류 — %d초 후 재시도 (%d/%d): %s', wait, attempt + 1, max_retries, e)
+                time.sleep(wait)
+            else:
+                raise
     result = json.loads(response.text or "")
     log.info('[2/3] Gemini 분석 완료')
     return result
