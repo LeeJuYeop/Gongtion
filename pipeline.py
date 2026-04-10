@@ -75,9 +75,6 @@ def summarize_job_posting(text: str, url: str) -> dict:
     "지역": {{
       "select": {{"name": "근무지 입력 (예: 서울, 대전, 판교 등)"}}
     }},
-    "마감기한": {{
-      "date": {{"start": "YYYY-MM-DD"}}
-    }},
     "링크": {{
       "url": "{url}"
     }}
@@ -89,11 +86,9 @@ def summarize_job_posting(text: str, url: str) -> dict:
 1. 응답은 반드시 위 스키마와 동일한 구조의 유효한 JSON 객체 하나로만 출력할 것.
 2. 기술스택이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 없는 기술을 지어내지 말 것.
 3. 경력, 채용유형, 지역이 명시되지 않았다면 해당 "select": {{"name": ""}} 처럼 빈 문자열로 둘 것. 지어내지 말 것.
-4. 마감기한이 명시되지 않았다면 "date": null 로 둘 것. 지어내지 말 것.
-5. 마감기한은 반드시 YYYY-MM-DD 형식으로 입력할 것. (예: 2025-12-31)
-6. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.
-7. 링크 값은 반드시 "{url}" 그대로 사용할 것.
-8. "직무명, 지역, 경력 등 select 타입에 들어갈 값에는 **쉼표(,)**를 절대 사용하지 않을 것. 쉼표가 있다면 공백이나 하이픈(-)으로 대체할 것."
+4. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.
+5. 링크 값은 반드시 "{url}" 그대로 사용할 것.
+6. "직무명, 지역, 경력 등 select 타입에 들어갈 값에는 **쉼표(,)**를 절대 사용하지 않을 것. 쉼표가 있다면 공백이나 하이픈(-)으로 대체할 것."
 
 [채용공고 텍스트]
 {text}
@@ -150,13 +145,9 @@ def markdown_to_notion_blocks(markdown: str) -> list:
 
 def sanitize_properties(properties: dict) -> dict:
     """Notion API 전달 전 속성값을 정제한다.
-    - null date 제거
     - select 필드: null·빈 값 제거, 쉼표를 공백으로 대체
     - multi_select 필드: 빈 항목 제거, 쉼표 포함 시 개별 항목으로 분리
     """
-    if properties.get("마감기한", {}).get("date") is None:
-        properties.pop("마감기한", None)
-
     for key in ("직무", "경력", "채용유형", "지역"):
         prop = properties.get(key)
         if prop is None:
