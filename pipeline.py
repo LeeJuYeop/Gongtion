@@ -196,7 +196,11 @@ def sanitize_properties(properties: dict) -> dict:
         if not select_obj or not isinstance(select_obj, dict):
             properties.pop(key, None)
             continue
-        name = (select_obj.get("name") or "").strip()
+        raw_name = select_obj.get("name")
+        if isinstance(raw_name, list):
+            log.warning('[sanitize] select 필드 "%s" 리스트 반환 — 첫 번째 값 사용: %s', key, raw_name)
+            raw_name = raw_name[0] if raw_name else ""
+        name = (raw_name or "").strip()
         if not name:
             properties.pop(key, None)
         elif "," in name:
