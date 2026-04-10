@@ -238,6 +238,15 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
                 raw_regions = item.get("regions", [])
                 if isinstance(raw_regions, str):
                     raw_regions = [raw_regions]
+                else:
+                    # API가 중첩 리스트나 비문자열 요소를 반환할 경우 평탄화
+                    flat = []
+                    for r in raw_regions:
+                        if isinstance(r, str):
+                            flat.append(r)
+                        elif isinstance(r, list):
+                            flat.extend(x for x in r if isinstance(x, str))
+                    raw_regions = flat
                 url_meta[url] = {
                     "category": item.get("depthTwos", "기타"),
                     "regions": raw_regions,
