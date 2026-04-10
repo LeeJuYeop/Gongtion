@@ -59,7 +59,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
       "title": [{{"text": {{"content": "회사명을 입력"}}}}]
     }},
     "직무": {{
-      "select": {{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 | 기타 중 하나"}}
+      "multi_select": [{{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 | 기타 중 해당하는 것 모두"}}]
     }},
     "기술스택": {{
       "multi_select": [
@@ -88,7 +88,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
 2. 기술스택이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 없는 기술을 지어내지 말 것.
 3. 경력, 채용유형이 명시되지 않았다면 해당 "select": {{"name": ""}} 처럼 빈 문자열로 둘 것. 지어내지 말 것. 단, 경력의 경우 "경력무관", "무관", "누구나" 등 경력 제한이 없음을 나타내는 표현이면 반드시 "무관"으로 입력할 것.
 4-1. 지역이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 근무지가 여러 개라면 모두 포함할 것. 시/도 단위(서울, 경기, 대전 등)로만 입력하고 구/시 단위는 제외할 것. (예: "서울 강남구" → "서울", "경기 성남시" → "경기")
-4. 직무는 반드시 "서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어", "웹풀스택", "기타" 중 하나로만 입력할 것. 이 6개 외의 값은 절대 사용하지 말 것.
+4. 직무는 반드시 "서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어", "웹풀스택", "기타" 중 해당하는 것만 입력할 것. 이 6개 외의 값은 절대 사용하지 말 것. 복수 해당 시 여러 개 포함 가능.
 5. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.
 6. 링크 값은 반드시 "{url}" 그대로 사용할 것.
 8. 경력 등 select 타입에 들어갈 값에는 **쉼표(,)**를 절대 사용하지 않을 것. 쉼표가 있다면 공백이나 하이픈(-)으로 대체할 것.
@@ -188,7 +188,7 @@ def sanitize_properties(properties: dict) -> dict:
     - select 필드: null·빈 값 제거, 쉼표를 공백으로 대체
     - multi_select 필드(기술스택·지역): 빈 항목 제거, 지역은 시/도 단위로 정규화
     """
-    for key in ("직무", "경력", "채용유형"):
+    for key in ("경력", "채용유형"):
         prop = properties.get(key)
         if prop is None:
             continue
@@ -207,7 +207,7 @@ def sanitize_properties(properties: dict) -> dict:
             log.warning('[sanitize] select 필드 "%s" 쉼표 제거: %s', key, name)
             properties[key] = {"select": {"name": name.replace(",", " ")}}
 
-    for key in ("기술스택", "지역"):
+    for key in ("직무", "기술스택", "지역"):
         prop = properties.get(key)
         if prop is None:
             continue
@@ -268,7 +268,7 @@ def create_notion_page(gemini_result: dict) -> dict:
     return response.json()
 
 
-def process_url(url: str, job_category: str | None = None, job_regions: list[str] | None = None) -> dict:
+def process_url(url: str, job_category: str | list[str] | None = None, job_regions: list[str] | None = None) -> dict:
     """URL을 받아 Jina → Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다.
     job_category가 주어지면 Gemini 분류 대신 해당 값을 직무 필드에 사용한다.
     job_regions가 주어지면 Gemini 추출 대신 해당 값을 지역 필드에 사용한다.
@@ -277,7 +277,8 @@ def process_url(url: str, job_category: str | None = None, job_regions: list[str
     content = fetch_with_jina(url)
     result = summarize_job_posting(content, url)
     if job_category:
-        result["properties"]["직무"] = {"select": {"name": job_category}}
+        cats = job_category if isinstance(job_category, list) else [job_category]
+        result["properties"]["직무"] = {"multi_select": [{"name": c} for c in cats if c]}
     if job_regions is not None:
         result["properties"]["지역"] = {"multi_select": [{"name": r} for r in job_regions if r]}
     page = create_notion_page(result)
