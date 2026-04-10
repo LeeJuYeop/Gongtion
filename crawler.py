@@ -4,6 +4,7 @@
 Notion DB에 없는 신규 공고만 pipeline을py의 Jina → Gemini → Notion 파이프라인으로 처리한다.
 """
 
+import datetime
 import json
 import logging
 import os
@@ -271,11 +272,28 @@ def process_urls(urls: set[str], limit: int, label: str) -> tuple[int, int]:
     return new_count, fail_count
 
 
+def resolve_zighang_cfg(config: dict) -> tuple[dict, str]:
+    """CRAWL_REGION_MODE 환경변수 또는 요일에 따라 zighang 설정을 선택한다.
+    반환값: (zighang_cfg, 모드명)
+    """
+    mode_env = os.environ.get("CRAWL_REGION_MODE", "").lower()
+    if mode_env == "weekend":
+        is_weekend = True
+    elif mode_env == "weekday":
+        is_weekend = False
+    else:
+        is_weekend = datetime.datetime.today().weekday() >= 5  # 토=5, 일=6
+
+    if is_weekend:
+        return config.get("zighang_weekend", config.get("zighang", {})), "주말"
+    return config.get("zighang", {}), "평일"
+
+
 def main():
     config = load_config()
     keywords = config["keywords"]
-    zighang_cfg = config.get("zighang", {})
-    log.info("=== 크롤러 시작 | 키워드: %s ===", keywords)
+    zighang_cfg, region_mode = resolve_zighang_cfg(config)
+    log.info("=== 크롤러 시작 | 지역모드: %s | 키워드: %s ===", region_mode, keywords)
 
     zighang_urls = fetch_zighang_urls(zighang_cfg)
     wanted_urls  = fetch_wanted_urls(keywords)

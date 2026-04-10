@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *'   # KST 오전 9시 (전체 사이트)
   workflow_dispatch:        # GitHub Actions 탭에서 수동 실행 가능 (테스트용)
+    inputs:
+      region_mode:
+        description: '지역 모드 (weekend / weekday / 비워두면 요일 자동 감지)'
+        required: false
+        default: ''
 
 jobs:
   crawl:
@@ -27,3 +32,4 @@ jobs:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           SARAMIN_API_KEY: ${{ secrets.SARAMIN_API_KEY }}
+          CRAWL_REGION_MODE: ${{ github.event.inputs.region_mode }}

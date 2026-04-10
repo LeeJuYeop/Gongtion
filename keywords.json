@@ -4,8 +4,16 @@
     "depthTwos": ["서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어"],
     "regions": [],
     "employeeTypes": [],
-    "careerMin": null,
-    "careerMax": null,
+    "careerMin": 0,
+    "careerMax": 3,
+    "educations": []
+  },
+  "zighang_weekend": {
+    "depthTwos": ["서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어"],
+    "regions": ["대전", "세종", "충남", "충북"],
+    "employeeTypes": [],
+    "careerMin": 0,
+    "careerMax": 0,
     "educations": []
   }
 }
