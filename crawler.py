@@ -191,9 +191,9 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
 #     return urls
 
 
-def fetch_zighang_urls(cfg: dict) -> dict[str, str]:
-    """직행(zighang.com) 공개 API로 채용공고 URL과 직무 카테고리를 수집한다.
-    반환값: {url: depthTwos 카테고리}
+def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
+    """직행(zighang.com) 공개 API로 채용공고 URL과 메타데이터를 수집한다.
+    반환값: {url: {"category": depthTwos, "regions": [...]}}
 
     API: https://api.zighang.com/api/recruitments/v3
     지원 필터: depthTwos(직무), regions(지역), employeeTypes(채용유형),
@@ -201,7 +201,7 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, str]:
     NOTE: deadlineType 파라미터는 API에서 지원되지 않는다.
     keywords.json 의 "zighang" 섹션으로 필터를 제어한다.
     """
-    url_categories: dict[str, str] = {}
+    url_meta: dict[str, dict] = {}
 
     params: list[tuple] = [
         ("page", 0),
@@ -235,13 +235,19 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, str]:
             item_id = item.get("id")
             if item_id:
                 url = f"https://zighang.com/recruitment/{item_id}"
-                url_categories[url] = item.get("depthTwos", "기타")
+                raw_regions = item.get("regions", [])
+                if isinstance(raw_regions, str):
+                    raw_regions = [raw_regions]
+                url_meta[url] = {
+                    "category": item.get("depthTwos", "기타"),
+                    "regions": raw_regions,
+                }
 
-        log.info("[직행] API 수집 → %d건", len(url_categories))
+        log.info("[직행] API 수집 → %d건", len(url_meta))
     except Exception as e:
         log.warning("[직행] API 수집 실패: %s", e)
 
-    return url_categories
+    return url_meta
 
 
 # ── 메인 오케스트레이션 ────────────────────────────────────────────────────────
@@ -250,9 +256,9 @@ MAX_NEW_ZIGHANG = 8   # 직행 런당 최대 신규 처리 건수
 MAX_NEW_WANTED  = 2   # 원티드 런당 최대 신규 처리 건수
 
 
-def process_urls(urls, limit: int, label: str, categories: dict[str, str] | None = None) -> tuple[int, int]:
+def process_urls(urls, limit: int, label: str, meta: dict[str, dict] | None = None) -> tuple[int, int]:
     """URL 집합을 순회하며 중복 확인 후 파이프라인을 실행한다. (new_count, fail_count) 반환.
-    categories가 주어지면 {url: job_category} 매핑을 파이프라인에 전달한다.
+    meta가 주어지면 {url: {"category": ..., "regions": [...]}} 매핑을 파이프라인에 전달한다.
     """
     new_count = 0
     fail_count = 0
@@ -267,8 +273,10 @@ def process_urls(urls, limit: int, label: str, categories: dict[str, str] | None
         except Exception as e:
             log.warning("중복 확인 실패 (%s): %s — 처리 진행", url, e)
         try:
-            job_category = categories.get(url) if categories else None
-            process_url(url, job_category)
+            item_meta = meta.get(url) if meta else None
+            job_category = item_meta.get("category") if item_meta else None
+            job_regions = item_meta.get("regions") if item_meta else None
+            process_url(url, job_category, job_regions)
             new_count += 1
         except Exception as e:
             log.error("파이프라인 실패 (%s): %s", url, e)
@@ -300,11 +308,11 @@ def main():
     zighang_cfg, region_mode = resolve_zighang_cfg(config)
     log.info("=== 크롤러 시작 | 지역모드: %s | 키워드: %s ===", region_mode, keywords)
 
-    zighang_urls = fetch_zighang_urls(zighang_cfg)
+    zighang_meta = fetch_zighang_urls(zighang_cfg)
     wanted_urls  = fetch_wanted_urls(keywords)
-    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_urls), len(wanted_urls))
+    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_meta), len(wanted_urls))
 
-    z_new, z_fail = process_urls(zighang_urls.keys(), MAX_NEW_ZIGHANG, "직행", zighang_urls)
+    z_new, z_fail = process_urls(zighang_meta.keys(), MAX_NEW_ZIGHANG, "직행", zighang_meta)
     w_new, w_fail = process_urls(wanted_urls,         MAX_NEW_WANTED,  "원티드")
 
     log.info(
