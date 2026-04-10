@@ -243,17 +243,32 @@ def fetch_zighang_urls(cfg: dict) -> set[str]:
 
 # ── 메인 오케스트레이션 ────────────────────────────────────────────────────────
 
-def collect_all_urls(keywords: list[str], zighang_cfg: dict) -> set[str]:
-    """원티드 + 직행에서 URL을 수집해 하나의 집합으로 반환한다. 개별 사이트 실패는 무시한다."""
-    all_urls: set[str] = set()
-    all_urls.update(fetch_wanted_urls(keywords))
-    all_urls.update(fetch_zighang_urls(zighang_cfg))
-    # all_urls.update(fetch_saramin_urls(keywords))   # 사람인 — 비활성화
-    # all_urls.update(fetch_jobkorea_urls(keywords))  # 잡코리아 — 비활성화
-    return all_urls
+MAX_NEW_ZIGHANG = 8   # 직행 런당 최대 신규 처리 건수
+MAX_NEW_WANTED  = 2   # 원티드 런당 최대 신규 처리 건수
 
 
-MAX_NEW_PER_RUN = 15  # 런당 최대 신규 처리 건수 (Gemini API 사용량 제한)
+def process_urls(urls: set[str], limit: int, label: str) -> tuple[int, int]:
+    """URL 집합을 순회하며 중복 확인 후 파이프라인을 실행한다. (new_count, fail_count) 반환."""
+    new_count = 0
+    fail_count = 0
+    for url in urls:
+        if new_count >= limit:
+            log.info("[%s] 최대 처리 건수(%d) 도달 — 나머지는 다음 실행에서 처리됨", label, limit)
+            break
+        try:
+            if is_duplicate(url):
+                log.debug("중복 — 건너뜀: %s", url)
+                continue
+        except Exception as e:
+            log.warning("중복 확인 실패 (%s): %s — 처리 진행", url, e)
+        try:
+            process_url(url)
+            new_count += 1
+        except Exception as e:
+            log.error("파이프라인 실패 (%s): %s", url, e)
+            fail_count += 1
+        time.sleep(2)  # Gemini / Notion API rate limit 대응
+    return new_count, fail_count
 
 
 def main():
@@ -262,34 +277,17 @@ def main():
     zighang_cfg = config.get("zighang", {})
     log.info("=== 크롤러 시작 | 키워드: %s ===", keywords)
 
-    all_urls = collect_all_urls(keywords, zighang_cfg)
-    log.info("총 %d개 URL 수집 완료. 중복 확인 중...", len(all_urls))
+    zighang_urls = fetch_zighang_urls(zighang_cfg)
+    wanted_urls  = fetch_wanted_urls(keywords)
+    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_urls), len(wanted_urls))
 
-    new_count = 0
-    fail_count = 0
+    z_new, z_fail = process_urls(zighang_urls, MAX_NEW_ZIGHANG, "직행")
+    w_new, w_fail = process_urls(wanted_urls,  MAX_NEW_WANTED,  "원티드")
 
-    for url in all_urls:
-        if new_count >= MAX_NEW_PER_RUN:
-            log.info("런당 최대 처리 건수(%d) 도달 — 나머지는 다음 실행에서 처리됨", MAX_NEW_PER_RUN)
-            break
-
-        try:
-            if is_duplicate(url):
-                log.debug("중복 — 건너뜀: %s", url)
-                continue
-        except Exception as e:
-            log.warning("중복 확인 실패 (%s): %s — 처리 진행", url, e)
-
-        try:
-            process_url(url)
-            new_count += 1
-        except Exception as e:
-            log.error("파이프라인 실패 (%s): %s", url, e)
-            fail_count += 1
-
-        time.sleep(2)  # Gemini / Notion API rate limit 대응
-
-    log.info("=== 크롤러 완료 | 신규 저장: %d건 | 실패: %d건 ===", new_count, fail_count)
+    log.info(
+        "=== 크롤러 완료 | 직행 신규: %d건(실패 %d) | 원티드 신규: %d건(실패 %d) ===",
+        z_new, z_fail, w_new, w_fail,
+    )
 
 
 if __name__ == "__main__":
