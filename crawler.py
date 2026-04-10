@@ -8,10 +8,9 @@ import json
 import logging
 import os
 import time
-from urllib.parse import quote
 
 import requests
-from bs4 import BeautifulSoup
+# from bs4 import BeautifulSoup  # 잡코리아 비활성화로 미사용
 from dotenv import load_dotenv
 
 from pipeline import process_url
@@ -72,47 +71,47 @@ def is_duplicate(url: str) -> bool:
 
 # ── 사이트별 URL 수집 ──────────────────────────────────────────────────────────
 
-def fetch_saramin_urls(keywords: list[str]) -> set[str]:
-    """사람인 Open API(oapi.saramin.co.kr)에서 채용공고 URL을 수집한다.
-
-    NOTE: 사람인 메인 사이트가 완전 JS 렌더링으로 전환되어 requests+BeautifulSoup으로는
-    공고 목록을 가져올 수 없다. 공식 Open API를 사용한다.
-    API 키는 https://oapi.saramin.co.kr 에서 무료 발급 가능하다.
-    GitHub Actions Secret에 SARAMIN_API_KEY를 추가해야 한다.
-    """
-    api_key = os.environ.get("SARAMIN_API_KEY")
-    if not api_key:
-        log.warning("[사람인] SARAMIN_API_KEY 환경변수가 없어 수집을 건너뜁니다.")
-        return set()
-
-    urls: set[str] = set()
-    for kw in keywords:
-        try:
-            resp = requests.get(
-                "https://oapi.saramin.co.kr/job-search",
-                params={
-                    "access-key": api_key,
-                    "keywords": kw,
-                    "count": 40,
-                    "start": 1,
-                    "_type": "json",
-                    "sort": "pd",
-                },
-                headers=BROWSER_HEADERS,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            before = len(urls)
-            for job in data.get("jobs", {}).get("job", []):
-                job_url = job.get("url")
-                if job_url:
-                    urls.add(job_url)
-            log.info("[사람인] '%s' → %d건", kw, len(urls) - before)
-        except Exception as e:
-            log.warning("[사람인] '%s' 수집 실패: %s", kw, e)
-        time.sleep(1)
-    return urls
+# def fetch_saramin_urls(keywords: list[str]) -> set[str]:
+#     """사람인 Open API(oapi.saramin.co.kr)에서 채용공고 URL을 수집한다.
+#
+#     NOTE: 사람인 메인 사이트가 완전 JS 렌더링으로 전환되어 requests+BeautifulSoup으로는
+#     공고 목록을 가져올 수 없다. 공식 Open API를 사용한다.
+#     API 키는 https://oapi.saramin.co.kr 에서 무료 발급 가능하다.
+#     GitHub Actions Secret에 SARAMIN_API_KEY를 추가해야 한다.
+#     """
+#     api_key = os.environ.get("SARAMIN_API_KEY")
+#     if not api_key:
+#         log.warning("[사람인] SARAMIN_API_KEY 환경변수가 없어 수집을 건너뜁니다.")
+#         return set()
+#
+#     urls: set[str] = set()
+#     for kw in keywords:
+#         try:
+#             resp = requests.get(
+#                 "https://oapi.saramin.co.kr/job-search",
+#                 params={
+#                     "access-key": api_key,
+#                     "keywords": kw,
+#                     "count": 40,
+#                     "start": 1,
+#                     "_type": "json",
+#                     "sort": "pd",
+#                 },
+#                 headers=BROWSER_HEADERS,
+#                 timeout=15,
+#             )
+#             resp.raise_for_status()
+#             data = resp.json()
+#             before = len(urls)
+#             for job in data.get("jobs", {}).get("job", []):
+#                 job_url = job.get("url")
+#                 if job_url:
+#                     urls.add(job_url)
+#             log.info("[사람인] '%s' → %d건", kw, len(urls) - before)
+#         except Exception as e:
+#             log.warning("[사람인] '%s' 수집 실패: %s", kw, e)
+#         time.sleep(1)
+#     return urls
 
 
 def fetch_wanted_urls(keywords: list[str]) -> set[str]:
@@ -161,34 +160,34 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
     return urls
 
 
-def fetch_jobkorea_urls(keywords: list[str]) -> set[str]:
-    """잡코리아 검색결과 HTML에서 채용공고 URL을 수집한다.
-
-    NOTE: 잡코리아는 JS 렌더링에 의존할 수 있어 HTML 파싱이 실패할 수 있다.
-    동작하지 않으면 잡코리아 RSS(https://www.jobkorea.co.kr/rss) 엔드포인트를
-    feedparser로 파싱하는 방식으로 교체를 고려할 것.
-    """
-    urls: set[str] = set()
-    for kw in keywords:
-        try:
-            search_url = (
-                f"https://www.jobkorea.co.kr/Search/"
-                f"?stext={quote(kw)}&tabType=recruit&OrderBy=2"
-            )
-            resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-            before = len(urls)
-            for a in soup.select(".list-post .information-title a"):
-                href = a.get("href", "")
-                if href:
-                    full = "https://www.jobkorea.co.kr" + href if href.startswith("/") else href
-                    urls.add(full)
-            log.info("[잡코리아] '%s' → %d건", kw, len(urls) - before)
-        except Exception as e:
-            log.warning("[잡코리아] '%s' 수집 실패: %s", kw, e)
-        time.sleep(1)
-    return urls
+# def fetch_jobkorea_urls(keywords: list[str]) -> set[str]:
+#     """잡코리아 검색결과 HTML에서 채용공고 URL을 수집한다.
+#
+#     NOTE: 잡코리아는 JS 렌더링에 의존할 수 있어 HTML 파싱이 실패할 수 있다.
+#     동작하지 않으면 잡코리아 RSS(https://www.jobkorea.co.kr/rss) 엔드포인트를
+#     feedparser로 파싱하는 방식으로 교체를 고려할 것.
+#     """
+#     urls: set[str] = set()
+#     for kw in keywords:
+#         try:
+#             search_url = (
+#                 f"https://www.jobkorea.co.kr/Search/"
+#                 f"?stext={quote(kw)}&tabType=recruit&OrderBy=2"
+#             )
+#             resp = requests.get(search_url, headers=BROWSER_HEADERS, timeout=15)
+#             resp.raise_for_status()
+#             soup = BeautifulSoup(resp.text, "html.parser")
+#             before = len(urls)
+#             for a in soup.select(".list-post .information-title a"):
+#                 href = a.get("href", "")
+#                 if href:
+#                     full = "https://www.jobkorea.co.kr" + href if href.startswith("/") else href
+#                     urls.add(full)
+#             log.info("[잡코리아] '%s' → %d건", kw, len(urls) - before)
+#         except Exception as e:
+#             log.warning("[잡코리아] '%s' 수집 실패: %s", kw, e)
+#         time.sleep(1)
+#     return urls
 
 
 def fetch_zighang_urls(cfg: dict) -> set[str]:
@@ -245,31 +244,12 @@ def fetch_zighang_urls(cfg: dict) -> set[str]:
 # ── 메인 오케스트레이션 ────────────────────────────────────────────────────────
 
 def collect_all_urls(keywords: list[str], zighang_cfg: dict) -> set[str]:
-    """모든 사이트에서 URL을 수집해 하나의 집합으로 반환한다. 개별 사이트 실패는 무시한다.
-
-    CRAWL_MODE 환경변수로 수집 대상을 제한할 수 있다.
-      morning  → 원티드 + 직행
-      evening  → 사람인 + 잡코리아
-      (미설정) → 전체
-    """
-    mode = os.environ.get("CRAWL_MODE", "").lower()
+    """원티드 + 직행에서 URL을 수집해 하나의 집합으로 반환한다. 개별 사이트 실패는 무시한다."""
     all_urls: set[str] = set()
-
-    if mode == "morning":
-        log.info("[모드] 오전 — 원티드 + 직행")
-        all_urls.update(fetch_wanted_urls(keywords))
-        all_urls.update(fetch_zighang_urls(zighang_cfg))
-    elif mode == "evening":
-        log.info("[모드] 오후 — 사람인 + 잡코리아")
-        all_urls.update(fetch_saramin_urls(keywords))
-        all_urls.update(fetch_jobkorea_urls(keywords))
-    else:
-        log.info("[모드] 전체 — 모든 사이트")
-        all_urls.update(fetch_saramin_urls(keywords))
-        all_urls.update(fetch_wanted_urls(keywords))
-        all_urls.update(fetch_jobkorea_urls(keywords))
-        all_urls.update(fetch_zighang_urls(zighang_cfg))
-
+    all_urls.update(fetch_wanted_urls(keywords))
+    all_urls.update(fetch_zighang_urls(zighang_cfg))
+    # all_urls.update(fetch_saramin_urls(keywords))   # 사람인 — 비활성화
+    # all_urls.update(fetch_jobkorea_urls(keywords))  # 잡코리아 — 비활성화
     return all_urls
 
 
