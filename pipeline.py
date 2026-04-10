@@ -58,7 +58,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
       "title": [{{"text": {{"content": "회사명을 입력"}}}}]
     }},
     "직무": {{
-      "select": {{"name": "직무명 입력 (예: 클라우드 엔지니어, 백엔드 개발자 등)"}}
+      "select": {{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 | 기타 중 하나"}}
     }},
     "기술스택": {{
       "multi_select": [
@@ -86,9 +86,10 @@ def summarize_job_posting(text: str, url: str) -> dict:
 1. 응답은 반드시 위 스키마와 동일한 구조의 유효한 JSON 객체 하나로만 출력할 것.
 2. 기술스택이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 없는 기술을 지어내지 말 것.
 3. 경력, 채용유형, 지역이 명시되지 않았다면 해당 "select": {{"name": ""}} 처럼 빈 문자열로 둘 것. 지어내지 말 것. 단, 경력의 경우 "경력무관", "무관", "누구나" 등 경력 제한이 없음을 나타내는 표현이면 반드시 "무관"으로 입력할 것.
-4. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.
-5. 링크 값은 반드시 "{url}" 그대로 사용할 것.
-6. "직무명, 지역, 경력 등 select 타입에 들어갈 값에는 **쉼표(,)**를 절대 사용하지 않을 것. 쉼표가 있다면 공백이나 하이픈(-)으로 대체할 것."
+4. 직무는 반드시 "서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어", "웹풀스택", "기타" 중 하나로만 입력할 것. 이 6개 외의 값은 절대 사용하지 말 것.
+5. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.
+6. 링크 값은 반드시 "{url}" 그대로 사용할 것.
+7. 지역, 경력 등 select 타입에 들어갈 값에는 **쉼표(,)**를 절대 사용하지 않을 것. 쉼표가 있다면 공백이나 하이픈(-)으로 대체할 것.
 
 [채용공고 텍스트]
 {text}
@@ -210,11 +211,15 @@ def create_notion_page(gemini_result: dict) -> dict:
     return response.json()
 
 
-def process_url(url: str) -> dict:
-    """URL을 받아 Jina → Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다."""
+def process_url(url: str, job_category: str | None = None) -> dict:
+    """URL을 받아 Jina → Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다.
+    job_category가 주어지면 Gemini 분류 대신 해당 값을 직무 필드에 사용한다.
+    """
     log.info('===== 파이프라인 시작: %s =====', url)
     content = fetch_with_jina(url)
     result = summarize_job_posting(content, url)
+    if job_category:
+        result["properties"]["직무"] = {"select": {"name": job_category}}
     page = create_notion_page(result)
     log.info('===== 파이프라인 완료 =====')
     return page

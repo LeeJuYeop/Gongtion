@@ -191,8 +191,9 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
 #     return urls
 
 
-def fetch_zighang_urls(cfg: dict) -> set[str]:
-    """직행(zighang.com) 공개 API로 채용공고 URL을 수집한다.
+def fetch_zighang_urls(cfg: dict) -> dict[str, str]:
+    """직행(zighang.com) 공개 API로 채용공고 URL과 직무 카테고리를 수집한다.
+    반환값: {url: depthTwos 카테고리}
 
     API: https://api.zighang.com/api/recruitments/v3
     지원 필터: depthTwos(직무), regions(지역), employeeTypes(채용유형),
@@ -200,7 +201,7 @@ def fetch_zighang_urls(cfg: dict) -> set[str]:
     NOTE: deadlineType 파라미터는 API에서 지원되지 않는다.
     keywords.json 의 "zighang" 섹션으로 필터를 제어한다.
     """
-    urls: set[str] = set()
+    url_categories: dict[str, str] = {}
 
     params: list[tuple] = [
         ("page", 0),
@@ -233,13 +234,14 @@ def fetch_zighang_urls(cfg: dict) -> set[str]:
         for item in data.get("data", {}).get("content", []):
             item_id = item.get("id")
             if item_id:
-                urls.add(f"https://zighang.com/recruitment/{item_id}")
+                url = f"https://zighang.com/recruitment/{item_id}"
+                url_categories[url] = item.get("depthTwos", "기타")
 
-        log.info("[직행] API 수집 → %d건", len(urls))
+        log.info("[직행] API 수집 → %d건", len(url_categories))
     except Exception as e:
         log.warning("[직행] API 수집 실패: %s", e)
 
-    return urls
+    return url_categories
 
 
 # ── 메인 오케스트레이션 ────────────────────────────────────────────────────────
@@ -248,8 +250,10 @@ MAX_NEW_ZIGHANG = 8   # 직행 런당 최대 신규 처리 건수
 MAX_NEW_WANTED  = 2   # 원티드 런당 최대 신규 처리 건수
 
 
-def process_urls(urls: set[str], limit: int, label: str) -> tuple[int, int]:
-    """URL 집합을 순회하며 중복 확인 후 파이프라인을 실행한다. (new_count, fail_count) 반환."""
+def process_urls(urls, limit: int, label: str, categories: dict[str, str] | None = None) -> tuple[int, int]:
+    """URL 집합을 순회하며 중복 확인 후 파이프라인을 실행한다. (new_count, fail_count) 반환.
+    categories가 주어지면 {url: job_category} 매핑을 파이프라인에 전달한다.
+    """
     new_count = 0
     fail_count = 0
     for url in urls:
@@ -263,7 +267,8 @@ def process_urls(urls: set[str], limit: int, label: str) -> tuple[int, int]:
         except Exception as e:
             log.warning("중복 확인 실패 (%s): %s — 처리 진행", url, e)
         try:
-            process_url(url)
+            job_category = categories.get(url) if categories else None
+            process_url(url, job_category)
             new_count += 1
         except Exception as e:
             log.error("파이프라인 실패 (%s): %s", url, e)
@@ -299,8 +304,8 @@ def main():
     wanted_urls  = fetch_wanted_urls(keywords)
     log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_urls), len(wanted_urls))
 
-    z_new, z_fail = process_urls(zighang_urls, MAX_NEW_ZIGHANG, "직행")
-    w_new, w_fail = process_urls(wanted_urls,  MAX_NEW_WANTED,  "원티드")
+    z_new, z_fail = process_urls(zighang_urls.keys(), MAX_NEW_ZIGHANG, "직행", zighang_urls)
+    w_new, w_fail = process_urls(wanted_urls,         MAX_NEW_WANTED,  "원티드")
 
     log.info(
         "=== 크롤러 완료 | 직행 신규: %d건(실패 %d) | 원티드 신규: %d건(실패 %d) ===",
