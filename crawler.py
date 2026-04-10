@@ -288,7 +288,7 @@ def process_urls(urls, limit: int, label: str, meta: dict[str, dict] | None = No
             process_url(url, job_category, job_regions)
             new_count += 1
         except Exception as e:
-            log.error("파이프라인 실패 (%s): %s", url, e)
+            log.exception("파이프라인 실패 (%s): %s", url, e)
             fail_count += 1
         time.sleep(2)  # Gemini / Notion API rate limit 대응
     return new_count, fail_count
