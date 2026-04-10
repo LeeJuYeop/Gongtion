@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import time
-import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 import requests
@@ -230,12 +229,11 @@ def fetch_zighang_urls(cfg: dict) -> set[str]:
         )
         resp.raise_for_status()
 
-        root = ET.fromstring(resp.text)
-        # 각 공고의 직접 자식 <id>만 추출 (company 하위 <id>는 제외)
-        for item in root.findall("./data/content/content"):
-            id_el = item.find("id")
-            if id_el is not None and id_el.text:
-                urls.add(f"https://zighang.com/recruitment/{id_el.text}")
+        data = resp.json()
+        for item in data.get("data", {}).get("content", []):
+            item_id = item.get("id")
+            if item_id:
+                urls.add(f"https://zighang.com/recruitment/{item_id}")
 
         log.info("[직행] API 수집 → %d건", len(urls))
     except Exception as e:
