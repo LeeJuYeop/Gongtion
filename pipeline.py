@@ -215,20 +215,26 @@ def sanitize_properties(properties: dict) -> dict:
         clean_items = []
         seen: set[str] = set()
         for item in items:
-            raw = (item.get("name") or "").strip()
-            if not raw:
-                continue
-            name = _normalize_region(raw) if key == "지역" else raw
-            if "," in name and key != "지역":
-                log.warning('[sanitize] multi_select 필드 "%s" 쉼표 분리: %s', key, name)
-                for part in name.split(","):
-                    part = part.strip()
-                    if part and part not in seen:
-                        clean_items.append({"name": part})
-                        seen.add(part)
-            elif name and name not in seen:
-                clean_items.append({"name": name})
-                seen.add(name)
+            raw_name = item.get("name") if isinstance(item, dict) else item
+            # Gemini가 name을 리스트로 묶어 반환한 경우 개별 항목으로 분리
+            if isinstance(raw_name, list):
+                raw_names = [str(x).strip() for x in raw_name if x]
+            else:
+                raw_names = [(raw_name or "").strip()]
+            for raw in raw_names:
+                if not raw:
+                    continue
+                name = _normalize_region(raw) if key == "지역" else raw
+                if "," in name and key != "지역":
+                    log.warning('[sanitize] multi_select 필드 "%s" 쉼표 분리: %s', key, name)
+                    for part in name.split(","):
+                        part = part.strip()
+                        if part and part not in seen:
+                            clean_items.append({"name": part})
+                            seen.add(part)
+                elif name and name not in seen:
+                    clean_items.append({"name": name})
+                    seen.add(name)
         properties[key] = {"multi_select": clean_items}
 
     return properties
