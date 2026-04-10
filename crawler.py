@@ -247,8 +247,11 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
                         elif isinstance(r, list):
                             flat.extend(x for x in r if isinstance(x, str))
                     raw_regions = flat
+                raw_category = item.get("depthTwos", "기타")
+                if isinstance(raw_category, str):
+                    raw_category = [raw_category] if raw_category else ["기타"]
                 url_meta[url] = {
-                    "category": item.get("depthTwos", "기타"),
+                    "category": raw_category,
                     "regions": raw_regions,
                 }
 
