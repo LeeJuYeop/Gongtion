@@ -1,6 +1,5 @@
 {
   "enabledPlugins": {
-    "notion@claude-plugins-official": true,
     "chrome-devtools-mcp@claude-plugins-official": true
   }
 }
