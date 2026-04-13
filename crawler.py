@@ -1,13 +1,15 @@
 """
 자동 채용공고 크롤러 — GitHub Actions cron으로 4시간마다 실행된다.
 각 채용사이트에서 키워드 매칭 공고 URL을 수집하고,
-Notion DB에 없는 신규 공고만 pipeline을py의 Jina → Gemini → Notion 파이프라인으로 처리한다.
+Notion DB에 없는 신규 공고만 Gemini → Notion 파이프라인으로 처리한다.
+직행은 자체 API에서 본문을 추출해 Jina를 생략하고, 원티드는 Jina를 사용한다.
 """
 
 import datetime
 import json
 import logging
 import os
+import re
 import time
 
 import requests
@@ -191,6 +193,77 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
 #     return urls
 
 
+def _pm_node_to_lines(node: dict) -> list[str]:
+    """ProseMirror 노드를 마크다운 줄 목록으로 재귀 변환한다."""
+    ntype = node.get("type", "")
+    children = node.get("content") or []
+
+    if ntype == "text":
+        return [node.get("text", "")]
+    if ntype == "hardBreak":
+        return ["\n"]
+    if ntype in ("doc",):
+        return [line for c in children for line in _pm_node_to_lines(c)]
+    if ntype == "paragraph":
+        text = "".join(line for c in children for line in _pm_node_to_lines(c)).strip()
+        return [text] if text else [""]
+    if ntype == "heading":
+        level = node.get("attrs", {}).get("level", 2)
+        text = "".join(line for c in children for line in _pm_node_to_lines(c)).strip()
+        return [f"{'#' * level} {text}"]
+    if ntype == "bulletList":
+        lines = []
+        for item in children:
+            text = " ".join(t for c in (item.get("content") or []) for t in _pm_node_to_lines(c)).strip()
+            if text:
+                lines.append(f"- {text}")
+        return lines
+    if ntype == "orderedList":
+        lines = []
+        for i, item in enumerate(children, 1):
+            text = " ".join(t for c in (item.get("content") or []) for t in _pm_node_to_lines(c)).strip()
+            if text:
+                lines.append(f"{i}. {text}")
+        return lines
+    if ntype == "image":
+        return []
+    # 알 수 없는 노드: 자식 재귀
+    return [line for c in children for line in _pm_node_to_lines(c)]
+
+
+def prosemirror_to_markdown(doc: dict) -> str:
+    """직행 summary 필드의 ProseMirror JSON을 마크다운 문자열로 변환한다."""
+    lines = [line for node in (doc.get("content") or []) for line in _pm_node_to_lines(node)]
+    text = "\n".join(lines)
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
+def fetch_zighang_content(url: str) -> str | None:
+    """직행 공고 URL에서 ID를 추출해 상세 API를 호출하고 본문을 마크다운으로 반환한다.
+    상세 API 호출 실패 또는 본문 없을 경우 None을 반환해 Jina로 폴백되게 한다.
+    """
+    match = re.search(r'/recruitment/([a-f0-9-]+)', url)
+    if not match:
+        return None
+    recruitment_id = match.group(1)
+    try:
+        resp = requests.get(
+            f"https://api.zighang.com/api/recruitments/{recruitment_id}",
+            headers=BROWSER_HEADERS,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data") or {}
+        summary = data.get("summary")
+        if not summary or not summary.get("content"):
+            log.warning("[직행] 상세 API 본문 없음 (%s) — Jina로 폴백", url)
+            return None
+        return prosemirror_to_markdown(summary)
+    except Exception as e:
+        log.warning("[직행] 상세 API 실패 (%s): %s — Jina로 폴백", url, e)
+        return None
+
+
 def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
     """직행(zighang.com) 공개 API로 채용공고 URL과 메타데이터를 수집한다.
     반환값: {url: {"category": depthTwos, "regions": [...]}}
@@ -268,9 +341,16 @@ MAX_NEW_ZIGHANG = 8   # 직행 런당 최대 신규 처리 건수
 MAX_NEW_WANTED  = 2   # 원티드 런당 최대 신규 처리 건수
 
 
-def process_urls(urls, limit: int, label: str, meta: dict[str, dict] | None = None) -> tuple[int, int]:
+def process_urls(
+    urls,
+    limit: int,
+    label: str,
+    meta: dict[str, dict] | None = None,
+    content_fetcher=None,
+) -> tuple[int, int]:
     """URL 집합을 순회하며 중복 확인 후 파이프라인을 실행한다. (new_count, fail_count) 반환.
     meta가 주어지면 {url: {"category": ..., "regions": [...]}} 매핑을 파이프라인에 전달한다.
+    content_fetcher가 주어지면 url을 인자로 호출해 본문 텍스트를 얻고 Jina를 생략한다.
     """
     new_count = 0
     fail_count = 0
@@ -288,7 +368,8 @@ def process_urls(urls, limit: int, label: str, meta: dict[str, dict] | None = No
             item_meta = meta.get(url) if meta else None
             job_category = item_meta.get("category") if item_meta else None
             job_regions = item_meta.get("regions") if item_meta else None
-            process_url(url, job_category, job_regions)
+            content = content_fetcher(url) if content_fetcher else None
+            process_url(url, job_category, job_regions, content)
             new_count += 1
         except Exception as e:
             log.exception("파이프라인 실패 (%s): %s", url, e)
@@ -325,7 +406,7 @@ def main():
     wanted_urls  = fetch_wanted_urls(keywords)
     log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_meta), len(wanted_urls))
 
-    z_new, z_fail = process_urls(zighang_meta.keys(), MAX_NEW_ZIGHANG, "직행", zighang_meta)
+    z_new, z_fail = process_urls(zighang_meta.keys(), MAX_NEW_ZIGHANG, "직행", zighang_meta, fetch_zighang_content)
     w_new, w_fail = process_urls(wanted_urls,         MAX_NEW_WANTED,  "원티드")
 
     log.info(
