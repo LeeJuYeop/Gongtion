@@ -1,5 +1,10 @@
 {
   "enabledPlugins": {
     "chrome-devtools-mcp@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "mcp__notion__notion-fetch"
+    ]
   }
 }
