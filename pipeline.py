@@ -59,7 +59,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
       "title": [{{"text": {{"content": "회사명을 입력"}}}}]
     }},
     "직무": {{
-      "multi_select": [{{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 | 기타 중 해당하는 것 모두"}}]
+      "multi_select": [{{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 중 해당하는 것 모두. 해당 사항이 없다면 '기타'로 표시"}}]
     }},
     "기술스택": {{
       "multi_select": [
@@ -68,7 +68,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
       ]
     }},
     "경력": {{
-      "select": {{"name": "경력 조건 입력 (예: 경력무관, 신입, 1년이상, 3년이하 등)"}}
+      "select": {{"name": "신입 혹은 경력 혹은 무관. 이 외에는 절대 불가능."}}
     }},
     "채용유형": {{
       "select": {{"name": "인턴 또는 정규직"}}
@@ -270,13 +270,22 @@ def create_notion_page(gemini_result: dict) -> dict:
     return response.json()
 
 
-def process_url(url: str, job_category: str | list[str] | None = None, job_regions: list[str] | None = None) -> dict:
-    """URL을 받아 Jina → Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다.
+def process_url(
+    url: str,
+    job_category: str | list[str] | None = None,
+    job_regions: list[str] | None = None,
+    content: str | None = None,
+) -> dict:
+    """URL을 받아 Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다.
+    content가 주어지면 Jina 호출을 생략하고 해당 텍스트를 본문으로 사용한다.
     job_category가 주어지면 Gemini 분류 대신 해당 값을 직무 필드에 사용한다.
     job_regions가 주어지면 Gemini 추출 대신 해당 값을 지역 필드에 사용한다.
     """
     log.info('===== 파이프라인 시작: %s =====', url)
-    content = fetch_with_jina(url)
+    if content is None:
+        content = fetch_with_jina(url)
+    else:
+        log.info('[1/3] 외부 제공 본문 사용 — Jina 생략 (글자 수: %d)', len(content))
     result = summarize_job_posting(content, url)
     if job_category:
         cats = job_category if isinstance(job_category, list) else [job_category]
