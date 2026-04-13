@@ -263,6 +263,8 @@ def create_notion_page(gemini_result: dict) -> dict:
     }
 
     response = requests.post(NOTION_PAGES_URL, headers=headers, json=payload, timeout=30)
+    if not response.ok:
+        log.error('[3/3] Notion API 오류 응답: %s', response.text)
     response.raise_for_status()
     log.info('[3/3] Notion 페이지 생성 완료')
     return response.json()
