@@ -326,6 +326,7 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
                 url_meta[url] = {
                     "category": raw_category,
                     "regions": raw_regions,
+                    "title": item.get("title", ""),
                 }
 
         log.info("[직행] API 수집 → %d건", len(url_meta))
@@ -368,8 +369,9 @@ def process_urls(
             item_meta = meta.get(url) if meta else None
             job_category = item_meta.get("category") if item_meta else None
             job_regions = item_meta.get("regions") if item_meta else None
+            job_title = item_meta.get("title") if item_meta else None
             content = content_fetcher(url) if content_fetcher else None
-            process_url(url, job_category, job_regions, content)
+            process_url(url, job_category, job_regions, content, job_title)
             new_count += 1
         except Exception as e:
             log.exception("파이프라인 실패 (%s): %s", url, e)
