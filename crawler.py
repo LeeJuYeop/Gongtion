@@ -117,15 +117,16 @@ def is_duplicate(url: str) -> bool:
 #     return urls
 
 
-def fetch_wanted_urls(keywords: list[str]) -> set[str]:
-    """원티드 비공식 검색 API에서 채용공고 URL을 수집한다.
+def fetch_wanted_urls(keywords: list[str]) -> dict[str, dict]:
+    """원티드 비공식 검색 API에서 채용공고 URL과 메타데이터를 수집한다.
+    반환값: {url: {"company_name": "...", "title": "..."}}
 
     NOTE: 원티드 API가 422를 반환하면 로그의 'Response body' 줄을 확인해
     실제 validation 오류 메시지를 파악할 것.
     지속 실패 시 공식 OpenAPI(openapi.wanted.jobs) 전환을 고려:
     WANTED_API_KEY 환경변수를 추가하고 Authorization 헤더를 포함해야 한다.
     """
-    urls: set[str] = set()
+    url_meta: dict[str, dict] = {}
     for kw in keywords:
         try:
             resp = requests.get(
@@ -148,19 +149,23 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
             )
             resp.raise_for_status()
             data = resp.json()
-            before = len(urls)
+            before = len(url_meta)
             for job in data.get("data", []):
                 job_id = job.get("id")
                 if job_id:
-                    urls.add(f"https://www.wanted.co.kr/wd/{job_id}")
-            log.info("[원티드] '%s' → %d건", kw, len(urls) - before)
+                    url = f"https://www.wanted.co.kr/wd/{job_id}"
+                    url_meta[url] = {
+                        "company_name": job.get("company", {}).get("name", ""),
+                        "title": job.get("position", ""),
+                    }
+            log.info("[원티드] '%s' → %d건", kw, len(url_meta) - before)
         except requests.exceptions.HTTPError as e:
             body = e.response.text[:300] if e.response is not None else ""
             log.warning("[원티드] '%s' 수집 실패: %s | Response body: %s", kw, e, body)
         except Exception as e:
             log.warning("[원티드] '%s' 수집 실패: %s", kw, e)
         time.sleep(1)
-    return urls
+    return url_meta
 
 
 # def fetch_jobkorea_urls(keywords: list[str]) -> set[str]:
@@ -327,6 +332,7 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
                     "category": raw_category,
                     "regions": raw_regions,
                     "title": item.get("title", ""),
+                    "company_name": item.get("company", {}).get("name", ""),
                 }
 
         log.info("[직행] API 수집 → %d건", len(url_meta))
@@ -370,8 +376,9 @@ def process_urls(
             job_category = item_meta.get("category") if item_meta else None
             job_regions = item_meta.get("regions") if item_meta else None
             job_title = item_meta.get("title") if item_meta else None
+            company_name = item_meta.get("company_name") if item_meta else None
             content = content_fetcher(url) if content_fetcher else None
-            process_url(url, job_category, job_regions, content, job_title)
+            process_url(url, job_category, job_regions, content, job_title, company_name)
             new_count += 1
         except Exception as e:
             log.exception("파이프라인 실패 (%s): %s", url, e)
@@ -405,14 +412,14 @@ def main():
     log.info("=== 크롤러 시작 | 지역모드: %s | 키워드: %s ===", region_mode, keywords)
 
     zighang_meta = fetch_zighang_urls(zighang_cfg)
-    wanted_urls  = fetch_wanted_urls(keywords)
-    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_meta), len(wanted_urls))
+    wanted_meta  = fetch_wanted_urls(keywords)
+    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_meta), len(wanted_meta))
 
     z_new, z_fail = process_urls(zighang_meta.keys(), MAX_NEW_ZIGHANG, "직행", zighang_meta, fetch_zighang_content)
-    w_new, w_fail = process_urls(wanted_urls,         MAX_NEW_WANTED,  "원티드")
+    w_new, w_fail = process_urls(wanted_meta.keys(),  MAX_NEW_WANTED,  "원티드", wanted_meta)
 
     log.info(
-        "=== 크롤러 완료 | 직행 신규: %d건(실패 %d) | 원티드 신규: %d건(실패 %d) ===",
+        "=== 크롤러 완료 | 직행 신규: %d건(실패 %d건) | 원티드 신규: %d건(실패 %d건) ===",
         z_new, z_fail, w_new, w_fail,
     )
 

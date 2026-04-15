@@ -1,10 +1,12 @@
 {
-  "enabledPlugins": {
-    "chrome-devtools-mcp@claude-plugins-official": true
-  },
   "permissions": {
     "allow": [
-      "mcp__notion__notion-fetch"
+      "mcp__notion__notion-fetch",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page",
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__evaluate_script"
     ]
+  },
+  "enabledPlugins": {
+    "chrome-devtools-mcp@claude-plugins-official": true
   }
 }

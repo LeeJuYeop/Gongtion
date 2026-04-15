@@ -59,7 +59,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
       "title": [{{"text": {{"content": "회사명을 입력"}}}}]
     }},
     "공고명": {{
-      "rich_text": [{{"text": {{"content": "채용공고 제목을 입력"}}}}]
+      "rich_text": [{{"text": {{"content": "채용공고 제목(공고명)을 입력. 직무명이 아닌 공고 제목 그대로 입력"}}}}]
     }},
     "직무": {{
       "multi_select": [{{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 중 해당하는 것 모두. 해당 사항이 없다면 '기타'로 표시"}}]
@@ -279,11 +279,13 @@ def process_url(
     job_regions: list[str] | None = None,
     content: str | None = None,
     job_title: str | None = None,
+    company_name: str | None = None,
 ) -> dict:
     """URL을 받아 Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다.
     content가 주어지면 Jina 호출을 생략하고 해당 텍스트를 본문으로 사용한다.
     job_category가 주어지면 Gemini 분류 대신 해당 값을 직무 필드에 사용한다.
     job_regions가 주어지면 Gemini 추출 대신 해당 값을 지역 필드에 사용한다.
+    company_name이 주어지면 Gemini 추출 대신 해당 값을 회사명 필드에 직접 사용한다.
     """
     log.info('===== 파이프라인 시작: %s =====', url)
     if content is None:
@@ -298,6 +300,8 @@ def process_url(
         result["properties"]["지역"] = {"multi_select": [{"name": r} for r in job_regions if r]}
     if job_title:
         result["properties"]["공고명"] = {"rich_text": [{"text": {"content": job_title}}]}
+    if company_name:
+        result["properties"]["회사명"] = {"title": [{"text": {"content": company_name}}]}
     page = create_notion_page(result)
     log.info('===== 파이프라인 완료 =====')
     return page
