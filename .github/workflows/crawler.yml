@@ -2,7 +2,7 @@ name: Auto Job Crawler
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # KST 오전 9시 (전체 사이트)
+    - cron: '0 22 * * 1,2,5'  # KST 화·수·토 오전 7시 (월·화·금 22:00 UTC)
   workflow_dispatch:        # GitHub Actions 탭에서 수동 실행 가능 (테스트용)
     inputs:
       region_mode:

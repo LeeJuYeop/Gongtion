@@ -117,15 +117,16 @@ def is_duplicate(url: str) -> bool:
 #     return urls
 
 
-def fetch_wanted_urls(keywords: list[str]) -> set[str]:
-    """원티드 비공식 검색 API에서 채용공고 URL을 수집한다.
+def fetch_wanted_urls(keywords: list[str]) -> dict[str, dict]:
+    """원티드 비공식 검색 API에서 채용공고 URL과 메타데이터를 수집한다.
+    반환값: {url: {"company_name": "...", "title": "..."}}
 
     NOTE: 원티드 API가 422를 반환하면 로그의 'Response body' 줄을 확인해
     실제 validation 오류 메시지를 파악할 것.
     지속 실패 시 공식 OpenAPI(openapi.wanted.jobs) 전환을 고려:
     WANTED_API_KEY 환경변수를 추가하고 Authorization 헤더를 포함해야 한다.
     """
-    urls: set[str] = set()
+    url_meta: dict[str, dict] = {}
     for kw in keywords:
         try:
             resp = requests.get(
@@ -148,19 +149,63 @@ def fetch_wanted_urls(keywords: list[str]) -> set[str]:
             )
             resp.raise_for_status()
             data = resp.json()
-            before = len(urls)
+            before = len(url_meta)
             for job in data.get("data", []):
                 job_id = job.get("id")
                 if job_id:
-                    urls.add(f"https://www.wanted.co.kr/wd/{job_id}")
-            log.info("[원티드] '%s' → %d건", kw, len(urls) - before)
+                    url = f"https://www.wanted.co.kr/wd/{job_id}"
+                    url_meta[url] = {
+                        "company_name": job.get("company", {}).get("name", ""),
+                        "title": job.get("position", ""),
+                        "regions": [job["address"]["location"]] if job.get("address", {}).get("location") else [],
+                    }
+            log.info("[원티드] '%s' → %d건", kw, len(url_meta) - before)
         except requests.exceptions.HTTPError as e:
             body = e.response.text[:300] if e.response is not None else ""
             log.warning("[원티드] '%s' 수집 실패: %s | Response body: %s", kw, e, body)
         except Exception as e:
             log.warning("[원티드] '%s' 수집 실패: %s", kw, e)
         time.sleep(1)
-    return urls
+    return url_meta
+
+
+def fetch_wanted_content(url: str) -> str | None:
+    """원티드 공고 URL에서 ID를 추출해 상세 API를 호출하고 본문을 마크다운으로 반환한다.
+    detail 필드(intro/main_tasks/requirements/preferred_points/benefits)를 섹션별로 조합한다.
+    실패 시 None을 반환해 Jina로 폴백되게 한다.
+    """
+    match = re.search(r'/wd/(\d+)', url)
+    if not match:
+        return None
+    job_id = match.group(1)
+    try:
+        resp = requests.get(
+            f"https://www.wanted.co.kr/api/v4/jobs/{job_id}",
+            headers={**BROWSER_HEADERS, "Referer": "https://www.wanted.co.kr/", "Accept": "application/json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        detail = resp.json().get("job", {}).get("detail") or {}
+        if not detail:
+            log.warning("[원티드] 상세 API 본문 없음 (%s) — Jina로 폴백", url)
+            return None
+
+        _SECTION = [
+            ("intro",            "## 회사 소개"),
+            ("main_tasks",       "## 주요 업무"),
+            ("requirements",     "## 자격 요건"),
+            ("preferred_points", "## 우대 사항"),
+            ("benefits",         "## 복리후생"),
+        ]
+        parts: list[str] = []
+        for key, header in _SECTION:
+            text = (detail.get(key) or "").strip()
+            if text:
+                parts.append(f"{header}\n{text}")
+        return "\n\n".join(parts) if parts else None
+    except Exception as e:
+        log.warning("[원티드] 상세 API 실패 (%s): %s — Jina로 폴백", url, e)
+        return None
 
 
 # def fetch_jobkorea_urls(keywords: list[str]) -> set[str]:
@@ -236,6 +281,17 @@ def prosemirror_to_markdown(doc: dict) -> str:
     lines = [line for node in (doc.get("content") or []) for line in _pm_node_to_lines(node)]
     text = "\n".join(lines)
     return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
+def _zighang_career(career_min: int, career_max: int) -> str:
+    """직행 careerMin/careerMax 값을 경력 레이블로 변환한다.
+    min=0, max=0 → 신입 / min=0, max>0 → 무관 / min>0 → 경력
+    """
+    if career_min == 0 and career_max == 0:
+        return "신입"
+    if career_min == 0:
+        return "무관"
+    return "경력"
 
 
 def fetch_zighang_content(url: str) -> str | None:
@@ -323,10 +379,17 @@ def fetch_zighang_urls(cfg: dict) -> dict[str, dict]:
                 raw_category = item.get("depthTwos", "기타")
                 if isinstance(raw_category, str):
                     raw_category = [raw_category] if raw_category else ["기타"]
+                employ_types = item.get("employeeTypes") or []
                 url_meta[url] = {
                     "category": raw_category,
                     "regions": raw_regions,
                     "title": item.get("title", ""),
+                    "company_name": item.get("company", {}).get("name", ""),
+                    "employ_type": employ_types[0] if employ_types else "",
+                    "career": _zighang_career(
+                        item.get("careerMin", 0),
+                        item.get("careerMax", 0),
+                    ),
                 }
 
         log.info("[직행] API 수집 → %d건", len(url_meta))
@@ -348,10 +411,12 @@ def process_urls(
     label: str,
     meta: dict[str, dict] | None = None,
     content_fetcher=None,
+    extract: set[str] | None = None,
 ) -> tuple[int, int]:
     """URL 집합을 순회하며 중복 확인 후 파이프라인을 실행한다. (new_count, fail_count) 반환.
-    meta가 주어지면 {url: {"category": ..., "regions": [...]}} 매핑을 파이프라인에 전달한다.
+    meta가 주어지면 {url: {필드: 값}} 매핑을 파이프라인에 전달한다.
     content_fetcher가 주어지면 url을 인자로 호출해 본문 텍스트를 얻고 Jina를 생략한다.
+    extract가 주어지면 Gemini가 해당 속성만 추출하는 경량 모드로 동작한다.
     """
     new_count = 0
     fail_count = 0
@@ -366,12 +431,19 @@ def process_urls(
         except Exception as e:
             log.warning("중복 확인 실패 (%s): %s — 처리 진행", url, e)
         try:
-            item_meta = meta.get(url) if meta else None
-            job_category = item_meta.get("category") if item_meta else None
-            job_regions = item_meta.get("regions") if item_meta else None
-            job_title = item_meta.get("title") if item_meta else None
+            m = meta.get(url) if meta else None
             content = content_fetcher(url) if content_fetcher else None
-            process_url(url, job_category, job_regions, content, job_title)
+            process_url(
+                url,
+                job_category=m.get("category") if m else None,
+                job_regions=m.get("regions") if m else None,
+                content=content,
+                job_title=m.get("title") if m else None,
+                job_company=m.get("company_name") if m else None,
+                job_career=m.get("career") if m else None,
+                job_employ_type=m.get("employ_type") if m else None,
+                extract=extract,
+            )
             new_count += 1
         except Exception as e:
             log.exception("파이프라인 실패 (%s): %s", url, e)
@@ -405,14 +477,24 @@ def main():
     log.info("=== 크롤러 시작 | 지역모드: %s | 키워드: %s ===", region_mode, keywords)
 
     zighang_meta = fetch_zighang_urls(zighang_cfg)
-    wanted_urls  = fetch_wanted_urls(keywords)
-    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_meta), len(wanted_urls))
+    wanted_meta  = fetch_wanted_urls(keywords)
+    log.info("수집 완료 — 직행: %d건, 원티드: %d건. 중복 확인 중...", len(zighang_meta), len(wanted_meta))
 
-    z_new, z_fail = process_urls(zighang_meta.keys(), MAX_NEW_ZIGHANG, "직행", zighang_meta, fetch_zighang_content)
-    w_new, w_fail = process_urls(wanted_urls,         MAX_NEW_WANTED,  "원티드")
+    # 직행: 회사명·공고명·직무·지역·경력·채용유형 직접 주입 → Gemini는 기술스택 + AI 한줄평만 담당
+    z_new, z_fail = process_urls(
+        zighang_meta.keys(), MAX_NEW_ZIGHANG, "직행",
+        zighang_meta, fetch_zighang_content,
+        extract={"기술스택"},
+    )
+    # 원티드: 회사명·공고명·지역 직접 주입 → Gemini는 직무·경력·채용유형·기술스택 + AI 한줄평 담당
+    w_new, w_fail = process_urls(
+        wanted_meta.keys(), MAX_NEW_WANTED, "원티드",
+        wanted_meta, fetch_wanted_content,
+        extract={"직무", "경력", "채용유형", "기술스택"},
+    )
 
     log.info(
-        "=== 크롤러 완료 | 직행 신규: %d건(실패 %d) | 원티드 신규: %d건(실패 %d) ===",
+        "=== 크롤러 완료 | 직행 신규: %d건(실패 %d건) | 원티드 신규: %d건(실패 %d건) ===",
         z_new, z_fail, w_new, w_fail,
     )
 
