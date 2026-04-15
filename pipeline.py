@@ -44,64 +44,96 @@ def fetch_with_jina(url: str) -> str:
     return response.text
 
 
-def summarize_job_posting(text: str, url: str) -> dict:
-    """Gemini API로 채용공고 본문을 분석해 Notion API용 딕셔너리를 반환한다."""
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+def _build_gemini_prompt(text: str, url: str, extract: set[str] | None) -> str:
+    """extract 집합에 따라 Gemini 프롬프트를 동적으로 구성한다.
+    extract=None이면 전체 필드(+ detailed_content)를 추출하는 풀 프롬프트를 반환한다.
+    extract가 주어지면 해당 필드만 추출하는 경량 프롬프트를 반환한다.
+    어떤 모드든 ai_comment는 항상 포함된다.
+    """
+    full = extract is None
 
-    prompt = f"""
-너는 채용 공고를 분석해서 아래 JSON 스키마에 맞춰 데이터를 추출하는 전문 파서야.
+    # ── properties 스키마 ──────────────────────────────────────────────────────
+    schema_parts: list[str] = []
+    if full:
+        schema_parts += [
+            '    "회사명": {{"title": [{{"text": {{"content": "회사명을 입력"}}}}]}}',
+            '    "공고명": {{"rich_text": [{{"text": {{"content": "공고 제목 그대로 입력"}}}}]}}',
+        ]
+    if full or "직무" in extract:
+        schema_parts.append(
+            '    "직무": {{"multi_select": [{{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 중 해당하는 것 모두. 없으면 기타"}}]}}'
+        )
+    if full or "기술스택" in extract:
+        schema_parts.append(
+            '    "기술스택": {{"multi_select": [{{"name": "기술1"}}, {{"name": "기술2"}}]}}'
+        )
+    if full or "경력" in extract:
+        schema_parts.append('    "경력": {{"select": {{"name": "신입 | 경력 | 무관 중 해당하는 것"}}}}')
+    if full or "채용유형" in extract:
+        schema_parts.append('    "채용유형": {{"select": {{"name": "인턴 또는 정규직"}}}}')
+    if full:
+        schema_parts += [
+            '    "지역": {{"multi_select": [{{"name": "시/도 단위 근무지1"}}, {{"name": "시/도 단위 근무지2"}}]}}',
+            f'    "링크": {{"url": "{url}"}}',
+        ]
+    properties_schema = ",\n".join(schema_parts)
+
+    # ── detailed_content (풀 모드 전용) ───────────────────────────────────────
+    detailed_schema = (
+        ',\n  "detailed_content": "주요업무·자격요건·우대사항 등을 마크다운 형식으로 상세히 요약한 긴 문자열"'
+        if full else ""
+    )
+
+    # ── 규칙 ──────────────────────────────────────────────────────────────────
+    rules: list[str] = [
+        "1. 응답은 반드시 위 스키마와 동일한 구조의 유효한 JSON 객체 하나로만 출력할 것.",
+    ]
+    if full or "기술스택" in extract:
+        rules.append('2. 기술스택이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 없는 기술을 지어내지 말 것.')
+    if full or "경력" in extract:
+        rules.append('3. 경력이 명시되지 않았다면 "select": {{"name": ""}} 처럼 빈 문자열로 둘 것. "경력무관"·"누구나" 등은 반드시 "무관"으로 입력할 것.')
+    if full or "채용유형" in extract:
+        rules.append('4. 채용유형이 명시되지 않았다면 "select": {{"name": ""}} 처럼 빈 문자열로 둘 것.')
+    if full or "직무" in extract:
+        rules.append('5. 직무는 반드시 "서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어", "웹풀스택", "기타" 중에서만 선택. 복수 해당 시 여러 개 포함 가능.')
+    if full:
+        rules.append(f'6. 지역이 명시되지 않았다면 [] 로 비워둘 것. 시/도 단위(서울·경기 등)로만 입력.')
+        rules.append(f'7. 링크 값은 반드시 "{url}" 그대로 사용할 것.')
+        rules.append('8. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.')
+    rules.append('9. select 타입 값에는 쉼표(,)를 절대 사용하지 않을 것.')
+    rules.append('10. ai_comment는 이 포지션의 핵심 특징을 1~2문장으로 간결하게 요약할 것. (예: "신입 가능한 토스증권 원장 플랫폼 포지션. Kafka/Kubernetes 실전 경험 가능하나 핀테크 도메인 지식 요구됨.")')
+    rules_str = "\n".join(rules)
+
+    return f"""너는 채용 공고를 분석해서 아래 JSON 스키마에 맞춰 데이터를 추출하는 전문 파서야.
 반드시 아래 스키마 구조를 그대로 유지하면서 값(value)만 채워서 응답해.
 
 [JSON 스키마]
 {{
   "properties": {{
-    "회사명": {{
-      "title": [{{"text": {{"content": "회사명을 입력"}}}}]
-    }},
-    "공고명": {{
-      "rich_text": [{{"text": {{"content": "채용공고 제목(공고명)을 입력. 직무명이 아닌 공고 제목 그대로 입력"}}}}]
-    }},
-    "직무": {{
-      "multi_select": [{{"name": "서버_백엔드 | DevOps_SRE | 시스템_네트워크 | 시스템소프트웨어 | 웹풀스택 중 해당하는 것 모두. 해당 사항이 없다면 '기타'로 표시"}}]
-    }},
-    "기술스택": {{
-      "multi_select": [
-        {{"name": "기술1"}},
-        {{"name": "기술2"}}
-      ]
-    }},
-    "경력": {{
-      "select": {{"name": "신입 | 경력 | 무관 중 해당하는 것."}}
-    }},
-    "채용유형": {{
-      "select": {{"name": "인턴 또는 정규직"}}
-    }},
-    "지역": {{
-      "multi_select": [{{"name": "시/도 단위 근무지1"}}, {{"name": "시/도 단위 근무지2"}}]
-    }},
-    "링크": {{
-      "url": "{url}"
-    }}
+{properties_schema}
   }},
-  "detailed_content": "주요업무, 자격요건, 우대사항 등 공고 핵심 내용을 마크다운 형식으로 상세히 요약한 긴 문자열"
+  "ai_comment": "이 포지션의 핵심을 1~2문장으로 요약"{detailed_schema}
 }}
 
 [절대 지켜야 할 규칙]
-1. 응답은 반드시 위 스키마와 동일한 구조의 유효한 JSON 객체 하나로만 출력할 것.
-2. 기술스택이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 없는 기술을 지어내지 말 것.
-3. 경력, 채용유형이 명시되지 않았다면 해당 "select": {{"name": ""}} 처럼 빈 문자열로 둘 것. 지어내지 말 것. 단, 경력의 경우 "경력무관", "무관", "누구나" 등 경력 제한이 없음을 나타내는 표현이면 반드시 "무관"으로 입력할 것.
-4-1. 지역이 명시되지 않았다면 "multi_select": [] 로 비워둘 것. 근무지가 여러 개라면 모두 포함할 것. 시/도 단위(서울, 경기, 대전 등)로만 입력하고 구/시 단위는 제외할 것. (예: "서울 강남구" → "서울", "경기 성남시" → "경기")
-4. 직무는 반드시 "서버_백엔드", "DevOps_SRE", "시스템_네트워크", "시스템소프트웨어", "웹풀스택", "기타" 중 해당하는 것만 입력할 것. 이 6개 외의 값은 절대 사용하지 말 것. 복수 해당 시 여러 개 포함 가능.
-5. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.
-6. 링크 값은 반드시 "{url}" 그대로 사용할 것.
-8. 경력 등 select 타입에 들어갈 값에는 **쉼표(,)**를 절대 사용하지 않을 것. 쉼표가 있다면 공백이나 하이픈(-)으로 대체할 것.
+{rules_str}
 
 [채용공고 텍스트]
 {text}
 """
 
-    log.info('[2/3] Gemini API 호출 중...')
+
+def summarize_job_posting(text: str, url: str, extract: set[str] | None = None) -> dict:
+    """Gemini API로 채용공고 본문을 분석해 딕셔너리를 반환한다.
+    extract=None이면 모든 속성과 detailed_content를 추출한다.
+    extract가 주어지면 해당 속성만 추출한다 (ai_comment는 항상 포함).
+    """
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    prompt = _build_gemini_prompt(text, url, extract)
+
+    log.info('[2/3] Gemini API 호출 중... (추출 필드: %s)', "전체" if extract is None else extract)
     max_retries = 3
+    response = None
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -120,7 +152,7 @@ def summarize_job_posting(text: str, url: str) -> dict:
                 time.sleep(wait)
             else:
                 raise
-    result = json.loads(response.text or "")
+    result = json.loads(response.text or "")  # type: ignore[union-attr]
     log.info('[2/3] Gemini 분석 완료')
     return result
 
@@ -247,14 +279,35 @@ def sanitize_properties(properties: dict) -> dict:
     return properties
 
 
-def create_notion_page(gemini_result: dict) -> dict:
-    """Gemini 결과를 Notion 데이터베이스에 페이지로 저장한다. 생성된 페이지 정보를 반환한다."""
+def create_notion_page(gemini_result: dict, direct_content: str | None = None) -> dict:
+    """Gemini 결과를 Notion 데이터베이스에 페이지로 저장한다. 생성된 페이지 정보를 반환한다.
+    direct_content가 주어지면 Gemini의 detailed_content 대신 해당 텍스트를 본문으로 사용한다.
+    ai_comment가 있으면 본문 최상단에 callout 블록으로 추가한다.
+    """
     properties = sanitize_properties(gemini_result["properties"])
+
+    body_markdown = direct_content if direct_content is not None else gemini_result.get("detailed_content", "")
+    body_blocks = markdown_to_notion_blocks(body_markdown)
+
+    ai_comment = (gemini_result.get("ai_comment") or "").strip()
+    if ai_comment:
+        callout = {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": [{"text": {"content": ai_comment}}],
+                "icon": {"type": "emoji", "emoji": "🤖"},
+                "color": "gray_background",
+            },
+        }
+        children = [callout] + body_blocks
+    else:
+        children = body_blocks
 
     payload = {
         "parent": {"database_id": os.environ.get("NOTION_DATABASE_ID")},
         "properties": properties,
-        "children": markdown_to_notion_blocks(gemini_result.get("detailed_content", ""))
+        "children": children,
     }
 
     log.info('[3/3] Notion API 호출 중...')
@@ -279,29 +332,45 @@ def process_url(
     job_regions: list[str] | None = None,
     content: str | None = None,
     job_title: str | None = None,
-    company_name: str | None = None,
+    job_company: str | None = None,
+    job_career: str | None = None,
+    job_employ_type: str | None = None,
+    extract: set[str] | None = None,
 ) -> dict:
     """URL을 받아 Gemini → Notion 파이프라인을 실행한다. 생성된 Notion 페이지 정보를 반환한다.
-    content가 주어지면 Jina 호출을 생략하고 해당 텍스트를 본문으로 사용한다.
-    job_category가 주어지면 Gemini 분류 대신 해당 값을 직무 필드에 사용한다.
-    job_regions가 주어지면 Gemini 추출 대신 해당 값을 지역 필드에 사용한다.
-    company_name이 주어지면 Gemini 추출 대신 해당 값을 회사명 필드에 직접 사용한다.
+
+    content      : 주어지면 Jina 생략. API에서 가져온 본문을 Notion에도 그대로 사용.
+    extract      : Gemini가 추출할 속성 집합. None이면 전체 추출(풀 모드).
+    job_*        : API에서 직접 얻은 값으로 Gemini 결과를 덮어쓴다.
     """
     log.info('===== 파이프라인 시작: %s =====', url)
     if content is None:
         content = fetch_with_jina(url)
+        direct_content = None          # Gemini의 detailed_content 사용
     else:
         log.info('[1/3] 외부 제공 본문 사용 — Jina 생략 (글자 수: %d)', len(content))
-    result = summarize_job_posting(content, url)
+        direct_content = content       # API 원문을 Notion 본문으로 직접 사용
+
+    result = summarize_job_posting(content, url, extract)
+
+    # API 직접 주입값으로 Gemini 결과 덮어쓰기
+    props = result.setdefault("properties", {})
     if job_category:
         cats = job_category if isinstance(job_category, list) else [job_category]
-        result["properties"]["직무"] = {"multi_select": [{"name": c} for c in cats if c]}
+        props["직무"] = {"multi_select": [{"name": c} for c in cats if c]}
     if job_regions is not None:
-        result["properties"]["지역"] = {"multi_select": [{"name": r} for r in job_regions if r]}
+        props["지역"] = {"multi_select": [{"name": r} for r in job_regions if r]}
     if job_title:
-        result["properties"]["공고명"] = {"rich_text": [{"text": {"content": job_title}}]}
-    if company_name:
-        result["properties"]["회사명"] = {"title": [{"text": {"content": company_name}}]}
-    page = create_notion_page(result)
+        props["공고명"] = {"rich_text": [{"text": {"content": job_title}}]}
+    if job_company:
+        props["회사명"] = {"title": [{"text": {"content": job_company}}]}
+    if job_career:
+        props["경력"] = {"select": {"name": job_career}}
+    if job_employ_type:
+        props["채용유형"] = {"select": {"name": job_employ_type}}
+    # 링크는 항상 원본 URL로 고정
+    props["링크"] = {"url": url}
+
+    page = create_notion_page(result, direct_content)
     log.info('===== 파이프라인 완료 =====')
     return page
