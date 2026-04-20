@@ -1,0 +1,21 @@
+{
+  "tech_stack": ["Python", "C++", "AWS", "Git", "GitHub Actions", "Flask", "Network"],
+  "learning_interests": ["Docker", "Kubernetes", "Kafka", "Linux"],
+  "projects": [
+    {
+      "name": "Gongtion",
+      "description": "채용공고 자동 스크래핑 및 AI API 활용 개인화 분석 제공 후 Notion DB 저장. GitHub Actions로 주기적 크롤링 자동화, Claude(바이브코딩) 활용.",
+      "tech_used": ["Python", "AWS Lambda", "GitHub Actions", "Slack Bot API", "Notion API", "Gemini API"]
+    },
+    {
+      "name": "ClaudeZoo",
+      "description": "Claude 생태계(스킬, 훅, MCP, 플러그인)를 GUI로 한눈에 볼 수 있게 제공하는 플랫폼.",
+      "tech_used": ["Electron"]
+    },
+    {
+      "name": "패스티켓",
+      "description": "학교 행사 도메인 플랫폼. 학생회비 기반 화이트리스트로 행사비용 차등, 카카오톡 로그인 API·토스페이 결제, 행사주최자 평점/리뷰 기능 제공.",
+      "tech_used": ["카카오톡 로그인 API", "토스페이", "node js", "superbaseDB"]
+    }
+  ]
+}

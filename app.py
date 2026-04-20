@@ -6,7 +6,7 @@ import requests
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.aws_lambda import SlackRequestHandler
-from pipeline import process_url, fetch_with_jina, summarize_job_posting, create_notion_page
+from pipeline import process_url, fetch_with_jina, summarize_job_posting, create_notion_page, load_user_profile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,7 +48,8 @@ def process_message(message, say):
     try:
         content = fetch_with_jina(extracted_url)
         step = 'Gemini'
-        result = summarize_job_posting(content, extracted_url)
+        profile = load_user_profile()
+        result = summarize_job_posting(content, extracted_url, profile=profile)
         step = 'Notion'
         page = create_notion_page(result)
         notion_url = page.get('url', '')
