@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import pathlib
 import re
 import time
 import requests
@@ -9,6 +10,28 @@ from google import genai
 from google.genai import types
 
 log = logging.getLogger(__name__)
+
+_PROFILE_PATH = pathlib.Path(__file__).parent / "profile.json"
+_user_profile: dict | None = None
+_profile_loaded = False
+
+
+def load_user_profile() -> dict | None:
+    global _user_profile, _profile_loaded
+    if _profile_loaded:
+        return _user_profile
+    _profile_loaded = True
+    try:
+        with _PROFILE_PATH.open(encoding="utf-8") as f:
+            _user_profile = json.load(f)
+        log.info("[profile] 로드 완료: 기술스택 %d개, 프로젝트 %d개",
+                 len(_user_profile.get("tech_stack", [])),
+                 len(_user_profile.get("projects", [])))
+    except FileNotFoundError:
+        log.info("[profile] profile.json 없음 — 개인화 비활성")
+    except Exception as e:
+        log.warning("[profile] 로드 실패 (%s) — 개인화 비활성", e)
+    return _user_profile
 
 JINA_BASE_URL = 'https://r.jina.ai/'
 NOTION_API_VERSION = '2022-06-28'
@@ -44,7 +67,7 @@ def fetch_with_jina(url: str) -> str:
     return response.text
 
 
-def _build_gemini_prompt(text: str, url: str, extract: set[str] | None) -> str:
+def _build_gemini_prompt(text: str, url: str, extract: set[str] | None, profile: dict | None = None) -> str:
     """extract 집합에 따라 Gemini 프롬프트를 동적으로 구성한다.
     extract=None이면 전체 필드(+ detailed_content)를 추출하는 풀 프롬프트를 반환한다.
     extract가 주어지면 해당 필드만 추출하는 경량 프롬프트를 반환한다.
@@ -102,6 +125,35 @@ def _build_gemini_prompt(text: str, url: str, extract: set[str] | None) -> str:
         rules.append('8. detailed_content는 마크다운 헤더(## 주요업무, ## 자격요건 등)를 사용해 가독성 있게 작성할 것.')
     rules.append('9. select 타입 값에는 쉼표(,)를 절대 사용하지 않을 것.')
     rules.append('10. ai_comment는 이 포지션의 핵심 특징을 1~2문장으로 간결하게 요약할 것. (예: "신입 가능한 토스증권 원장 플랫폼 포지션. Kafka/Kubernetes 실전 경험 가능하나 핀테크 도메인 지식 요구됨.")')
+
+    if profile:
+        tech = ", ".join(profile.get("tech_stack", []))
+        interests = ", ".join(profile.get("learning_interests", []))
+        projects_lines = "\n".join(
+            f'- {p["name"]}: {p["description"]} [사용기술: {", ".join(p.get("tech_used", [])) or "미기재"}]'
+            for p in profile.get("projects", [])
+        )
+        profile_block = f"""
+[지원자 프로필]
+보유 기술: {tech}
+학습 관심: {interests}
+주요 프로젝트:
+{projects_lines}
+"""
+        rules.append(
+            '11. personal_comment는 [지원자 프로필]을 참고해 다음 두 가지를 2~3문장으로 분석할 것: '
+            '(a) 지원자 보유 기술 중 이 포지션과 매칭되는 것 vs 새로 배워야 하는 것, '
+            '(b) 지원자 프로젝트 경험 중 이 포지션 지원 시 어필할 수 있는 것. '
+            '프로필이 공고와 전혀 무관하면 "프로필과 연관성 낮음"으로 간결히 작성.'
+        )
+    else:
+        profile_block = ""
+
+    personal_comment_schema = (
+        ',\n  "personal_comment": "지원자 관점의 개인화 분석 (2~3문장)"'
+        if profile else ""
+    )
+
     rules_str = "\n".join(rules)
 
     return f"""너는 채용 공고를 분석해서 아래 JSON 스키마에 맞춰 데이터를 추출하는 전문 파서야.
@@ -112,24 +164,25 @@ def _build_gemini_prompt(text: str, url: str, extract: set[str] | None) -> str:
   "properties": {{
 {properties_schema}
   }},
-  "ai_comment": "이 포지션의 핵심을 1~2문장으로 요약"{detailed_schema}
+  "ai_comment": "이 포지션의 핵심을 1~2문장으로 요약"{personal_comment_schema}{detailed_schema}
 }}
 
 [절대 지켜야 할 규칙]
 {rules_str}
-
+{profile_block}
 [채용공고 텍스트]
 {text}
 """
 
 
-def summarize_job_posting(text: str, url: str, extract: set[str] | None = None) -> dict:
+def summarize_job_posting(text: str, url: str, extract: set[str] | None = None, profile: dict | None = None) -> dict:
     """Gemini API로 채용공고 본문을 분석해 딕셔너리를 반환한다.
     extract=None이면 모든 속성과 detailed_content를 추출한다.
     extract가 주어지면 해당 속성만 추출한다 (ai_comment는 항상 포함).
+    profile이 주어지면 personal_comment(개인화 분석)도 함께 추출한다.
     """
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-    prompt = _build_gemini_prompt(text, url, extract)
+    prompt = _build_gemini_prompt(text, url, extract, profile)
 
     log.info('[2/3] Gemini API 호출 중... (추출 필드: %s)', "전체" if extract is None else extract)
     max_retries = 3
@@ -290,8 +343,11 @@ def create_notion_page(gemini_result: dict, direct_content: str | None = None) -
     body_blocks = markdown_to_notion_blocks(body_markdown)
 
     ai_comment = (gemini_result.get("ai_comment") or "").strip()
+    personal_comment = (gemini_result.get("personal_comment") or "").strip()
+
+    prefix_blocks = []
     if ai_comment:
-        callout = {
+        prefix_blocks.append({
             "object": "block",
             "type": "callout",
             "callout": {
@@ -299,10 +355,18 @@ def create_notion_page(gemini_result: dict, direct_content: str | None = None) -
                 "icon": {"type": "emoji", "emoji": "🤖"},
                 "color": "gray_background",
             },
-        }
-        children = [callout] + body_blocks
-    else:
-        children = body_blocks
+        })
+    if personal_comment:
+        prefix_blocks.append({
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": [{"text": {"content": personal_comment}}],
+                "icon": {"type": "emoji", "emoji": "👤"},
+                "color": "blue_background",
+            },
+        })
+    children = prefix_blocks + body_blocks
 
     payload = {
         "parent": {"database_id": os.environ.get("NOTION_DATABASE_ID")},
@@ -344,6 +408,7 @@ def process_url(
     job_*        : API에서 직접 얻은 값으로 Gemini 결과를 덮어쓴다.
     """
     log.info('===== 파이프라인 시작: %s =====', url)
+    profile = load_user_profile()
     if content is None:
         content = fetch_with_jina(url)
         direct_content = None          # Gemini의 detailed_content 사용
@@ -351,7 +416,7 @@ def process_url(
         log.info('[1/3] 외부 제공 본문 사용 — Jina 생략 (글자 수: %d)', len(content))
         direct_content = content       # API 원문을 Notion 본문으로 직접 사용
 
-    result = summarize_job_posting(content, url, extract)
+    result = summarize_job_posting(content, url, extract, profile)
 
     # API 직접 주입값으로 Gemini 결과 덮어쓰기
     props = result.setdefault("properties", {})
