@@ -463,7 +463,9 @@ def resolve_zighang_cfg(config: dict) -> tuple[dict, str]:
     elif mode_env == "weekday":
         is_weekend = False
     else:
-        is_weekend = datetime.datetime.today().weekday() >= 5  # 토=5, 일=6
+        import zoneinfo
+        kst_now = datetime.datetime.now(zoneinfo.ZoneInfo("Asia/Seoul"))
+        is_weekend = kst_now.weekday() >= 5  # 토=5, 일=6
 
     if is_weekend:
         return config.get("zighang_weekend", config.get("zighang", {})), "주말"
