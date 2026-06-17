@@ -1,5 +1,5 @@
 """
-자동 채용공고 크롤러 — GitHub Actions cron으로 4시간마다 실행된다.
+자동 채용공고 크롤러 — GitHub Actions cron으로 정해진 시간마다 실행된다.
 각 채용사이트에서 키워드 매칭 공고 URL을 수집하고,
 Notion DB에 없는 신규 공고만 Gemini → Notion 파이프라인으로 처리한다.
 직행은 자체 API에서 본문을 추출해 Jina를 생략하고, 원티드는 Jina를 사용한다.
