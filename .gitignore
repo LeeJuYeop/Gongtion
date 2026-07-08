@@ -11,3 +11,10 @@
 # env파일 제외
 .env
 .claude
+
+# 기타
+__pycache__
+.claude
+.claudeignore
+CLAUDE.md
+requirements.txt
